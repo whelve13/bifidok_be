@@ -238,11 +238,11 @@ class BMAAScorer:
                     evidence_text = "Standard enterprise developer footprint."
 
             elif crit.category == "tenders":
-                source = "European Public Procurement / TED (Rows 37-38)"
+                source = tenders.get("source", "Public Procurement News Feed")
                 if tenders.get("active_tender_rfp"):
-                    strength = 0.85
+                    strength = tenders.get("confidence", 0.40)
                     top_t = tenders.get("notices", [{}])[0].get("title", "")
-                    evidence_text = f"Active Public RFP/Tender: '{top_t[:70]}...'"
+                    evidence_text = f"Public Procurement ({source}): '{top_t[:70]}...'"
                 else:
                     strength = 0.20
                     evidence_text = "No active public IT tenders or RFPs detected."

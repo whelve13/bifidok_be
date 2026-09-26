@@ -317,8 +317,8 @@ class CustomerProspectingEngine:
                 category="Public Tender / RFP",
                 title="Active Procurement RFP Notice Detected",
                 snippet=f"Notice: '{top_notice.get('title', 'Public procurement tender')[:75]}...'",
-                source="European Public Procurement & OpenTender",
-                confidence=0.95,
+                source=tender_data.get("source", "Public Procurement News Feed"),
+                confidence=tender_data.get("confidence", 0.40),
                 points_awarded=tender_pts
             ))
 
