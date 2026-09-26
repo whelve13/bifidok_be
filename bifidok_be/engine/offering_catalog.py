@@ -5,7 +5,7 @@ operational wedges, live signal queries, and target buyer personas.
 """
 from typing import Dict, List, Any
 import re
-from backend.models import OfferingProfile, CommercialWedge, DecisionMakerPersona
+from models import OfferingProfile, CommercialWedge, DecisionMakerPersona
 
 # Pre-configured flagship offerings
 FLAGSHIP_OFFERINGS: Dict[str, OfferingProfile] = {

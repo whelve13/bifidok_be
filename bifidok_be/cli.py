@@ -3,8 +3,8 @@ import sys
 import os
 import json
 
-# Add parent directory to sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add current directory to sys.path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 # Ensure UTF-8 stdout on Windows console
 if sys.platform == "win32":
@@ -19,18 +19,18 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
-from backend.engine.prospecting_engine import CustomerProspectingEngine
-from backend.engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
-from backend.models import PerfectCustomerDossier, ProspectingUniverseResult
+from engine.prospecting_engine import CustomerProspectingEngine
+from engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from models import PerfectCustomerDossier, ProspectingUniverseResult
 
-from backend.connectors.financials import fetch_financial_signals
-from backend.connectors.news import fetch_company_news
-from backend.connectors.security import analyze_security_posture
-from backend.connectors.ats import fetch_ats_hiring_signals
-from backend.connectors.registries import verify_official_registry
-from backend.connectors.developer import fetch_developer_signals
-from backend.connectors.vulnerabilities import evaluate_vulnerability_exposure
-from backend.connectors.tenders import fetch_public_procurement_tenders
+from connectors.financials import fetch_financial_signals
+from connectors.news import fetch_company_news
+from connectors.security import analyze_security_posture
+from connectors.ats import fetch_ats_hiring_signals
+from connectors.registries import verify_official_registry
+from connectors.developer import fetch_developer_signals
+from connectors.vulnerabilities import evaluate_vulnerability_exposure
+from connectors.tenders import fetch_public_procurement_tenders
 
 console = Console(force_terminal=True, highlight=False)
 last_prospecting_result: ProspectingUniverseResult = None
@@ -303,7 +303,7 @@ def test_individual_connectors():
         console.print_json(data=tenders)
 
 def render_gnn_prediction(company_name: str):
-    from backend.gnn.inference import HTGNNInferenceEngine
+    from gnn.inference import HTGNNInferenceEngine
     console.print(f"\n[bold magenta]>>> Executing HT-GNN Neural Message-Passing for '{company_name}'...[/bold magenta]")
     engine = HTGNNInferenceEngine()
     pred = engine.predict_account(company_name)
