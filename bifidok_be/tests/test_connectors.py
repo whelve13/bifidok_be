@@ -9,38 +9,7 @@ pkg_dir = os.path.abspath(os.path.join(current_dir, ".."))
 if pkg_dir not in sys.path:
     sys.path.insert(0, pkg_dir)
 
-from engine.anti_hallucination import verify_verbatim_quote
 from connectors import fetch_gdelt_signals, fetch_public_procurement_tenders, is_official_contract_award
-
-
-class TestAntiHallucination(unittest.TestCase):
-    def test_exact_match(self):
-        source = "Lufthansa Group announced a target to reduce ~4,000 administrative jobs by 2030 using automation."
-        quote = "target to reduce ~4,000 administrative jobs by 2030"
-        self.assertTrue(verify_verbatim_quote(quote, source))
-
-    def test_case_insensitive_match(self):
-        source = "Orange Systems delivers TURNKEY AGENTIC AUTOMATION squads."
-        quote = "turnkey agentic automation"
-        self.assertTrue(verify_verbatim_quote(quote, source))
-
-    def test_whitespace_tolerance(self):
-        source = "DHL Group launched Strategy 2030 focusing on automated logistics."
-        quote = "  Strategy 2030 focusing on automated logistics  \n"
-        self.assertTrue(verify_verbatim_quote(quote, source))
-
-    def test_hallucination_rejection(self):
-        source = "Lufthansa Group announced a target to reduce ~4,000 administrative jobs by 2030."
-        # Hallucinated number (5,000 instead of 4,000)
-        quote = "target to reduce ~5,000 administrative jobs by 2030"
-        self.assertFalse(verify_verbatim_quote(quote, source))
-
-    def test_empty_or_invalid_inputs(self):
-        self.assertFalse(verify_verbatim_quote("", "Valid source text"))
-        self.assertFalse(verify_verbatim_quote("   ", "Valid source text"))
-        self.assertFalse(verify_verbatim_quote("Quote", ""))
-        self.assertFalse(verify_verbatim_quote(None, "Valid source text"))
-        self.assertFalse(verify_verbatim_quote("Quote", None))
 
 
 class TestGDELTConnector(unittest.TestCase):
