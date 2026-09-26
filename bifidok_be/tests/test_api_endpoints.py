@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 from api.app import app
 from api.auth import generate_api_key, get_authenticated_tenant
 from db.schema import Base, MCPApiKey
+from db.seed import seed_database
 from db.session import get_db
 from services.leads_service import (
     OUTREACH_QUEUE,
@@ -58,6 +59,7 @@ class TestApiEndpoints(unittest.TestCase):
         app.dependency_overrides[get_db] = override_get_db
         self.client = TestClient(app)
         self.session = self.TestingSessionLocal()
+        seed_database(self.session)
 
         # Clear state
         clear_lead_feedback()
@@ -80,6 +82,18 @@ class TestApiEndpoints(unittest.TestCase):
         self.assertEqual(data.get("status"), "UP")
         self.assertIn("timestamp", data)
         self.assertTrue(len(data["timestamp"]) > 10)
+
+    def test_healthz_endpoint(self):
+        """GET /healthz should return 200 (or 503 if down) with preflight diagnostics component statuses."""
+        response = self.client.get("/healthz")
+        self.assertIn(response.status_code, (200, 503))
+        data = response.json()
+        self.assertIn("status", data)
+        self.assertIn("timestamp", data)
+        self.assertIn("components", data)
+        self.assertIn("database", data["components"])
+        self.assertIn("redis", data["components"])
+        self.assertIn("gemini", data["components"])
 
     # =========================================================================
     # 2. AUTHENTICATION & API KEY TESTS

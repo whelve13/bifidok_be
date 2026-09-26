@@ -15,70 +15,6 @@ logger = logging.getLogger(__name__)
 OUTREACH_QUEUE: Dict[str, Dict[str, Any]] = {}
 MEMORY_CACHE: Dict[str, str] = {}
 
-# Canonical default leads from Annex Section 5.1 & Section 6
-CANONICAL_LEADS = [
-    {
-        "company": "DHL Group",
-        "domain": "dhl.com",
-        "score": 86,
-        "primary_signal": "Strategy 2030 Agentic RFQ Deployment",
-    },
-    {
-        "company": "Lufthansa Group",
-        "domain": "lufthansa.com",
-        "score": 46,
-        "primary_signal": "4,000 Headcount Reduction Target",
-    },
-]
-
-# Grounded audit trails for canonical accounts (Section 6)
-CANONICAL_EVIDENCE = {
-    "dhl.com": {
-        "status": "QUALIFIED",
-        "company": "DHL Group",
-        "domain": "dhl.com",
-        "score": 86,
-        "evaluations": [
-            {
-                "source_url": "https://www.dhl.com/global-en/home/about-us/strategy-2030.html",
-                "detected": True,
-                "confidence": 0.95,
-                "evidence_quote": "Corporate Strategy 2030 prioritizes agentic AI; production deployments live for RFQ quotation and operational communications.",
-                "reasoning": "Strategy 2030 explicitly funds agentic AI and multi-agent operational modules.",
-            },
-            {
-                "source_url": "https://www.dhl.com/procurement/technology",
-                "detected": True,
-                "confidence": 0.90,
-                "evidence_quote": "Public policy explicitly confirms the use of third-party software vendors alongside internal engineering to accelerate adoption.",
-                "reasoning": "Explicit openness to external vendor integration alongside internal engineering.",
-            },
-        ],
-    },
-    "lufthansa.com": {
-        "status": "REVIEW_NEEDED",
-        "company": "Lufthansa Group",
-        "domain": "lufthansa.com",
-        "score": 46,
-        "evaluations": [
-            {
-                "source_url": "https://investor-relations.lufthansagroup.com/en/news",
-                "detected": True,
-                "confidence": 0.90,
-                "evidence_quote": "Official target to reduce ~4,000 administrative jobs by 2030 using automation, digitalization, and process consolidation.",
-                "reasoning": "Major SG&A and administrative downsizing program creates strong automation pressure.",
-            },
-            {
-                "source_url": "https://www.lhsystems.com/about",
-                "detected": True,
-                "confidence": 0.85,
-                "evidence_quote": "Strong internal development division (Lufthansa Systems) that creates organizational resistance to external standard software.",
-                "reasoning": "Negative signal: In-house IT engineering creates adoption friction.",
-            },
-        ],
-    },
-}
-
 
 def get_redis_client():
     """Optional Redis client connection, enabled only if REDIS_URL or REDIS_HOST is explicitly configured."""
@@ -102,13 +38,24 @@ def get_redis_client():
         return None
 
 
-def query_prioritized_leads(service_line: str, min_score: int = 70) -> List[Dict[str, Any]]:
+def query_prioritized_leads(
+    service_line: str,
+    min_score: int = 70,
+    session: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
     """
     Discovers top enterprise leads filtered by minimum readiness score.
     Queries database lead scores, falling back to cached or canonical leads.
     """
+    try:
+        from config import STRICT_PRODUCTION
+    except ImportError:
+        try:
+            from bifidok_be.config import STRICT_PRODUCTION
+        except ImportError:
+            STRICT_PRODUCTION = os.getenv("STRICT_PRODUCTION", "false").lower() in ("true", "1", "yes")
+
     # 1. Check Redis / memory cache
-    cache_key = f"leads:{service_line}:{min_score}"
     r = get_redis_client()
     if r:
         try:
@@ -120,16 +67,24 @@ def query_prioritized_leads(service_line: str, min_score: int = 70) -> List[Dict
             pass
 
     # 2. Query persistent PostgreSQL/SQLite storage
+    close_session = False
     try:
         from db.session import SessionLocal
         from db.schema import Company, ServiceOffering, LeadScore, SignalEvaluation
         from db.repository import get_leads_by_service
 
-        session = SessionLocal()
+        if session is None:
+            session = SessionLocal()
+            close_session = True
+
         try:
+            clean_search = service_line.replace("_", " ").strip()
             offering = (
                 session.query(ServiceOffering)
-                .filter(ServiceOffering.name.ilike(f"%{service_line}%"))
+                .filter(
+                    (ServiceOffering.name.ilike(f"%{service_line}%")) |
+                    (ServiceOffering.name.ilike(f"%{clean_search}%"))
+                )
                 .first()
             )
 
@@ -160,22 +115,30 @@ def query_prioritized_leads(service_line: str, min_score: int = 70) -> List[Dict
                                 "score": ls.composite_score,
                                 "primary_signal": primary_signal,
                             })
-                    if results:
-                        return results
+                    return results
+            return []
         finally:
-            session.close()
+            if close_session:
+                session.close()
     except Exception as exc:
-        logger.debug("Database query for leads failed (%s), falling back to canonical dataset.", exc)
+        if STRICT_PRODUCTION:
+            raise RuntimeError("Database query failed under STRICT_PRODUCTION.") from exc
+        logger.debug("Database query for leads failed (%s)", exc)
+        return []
 
-    # 3. Fallback to canonical dataset
-    return [item for item in CANONICAL_LEADS if item["score"] >= min_score]
 
-
-def query_signal_evidence(domain: str) -> Dict[str, Any]:
+def query_signal_evidence(domain: str, session: Optional[Any] = None) -> Dict[str, Any]:
     """
     Retrieves exact verbatim quotes and source links justifying why a company is ready to buy.
     """
     clean_domain = domain.strip().lower()
+    try:
+        from config import STRICT_PRODUCTION
+    except ImportError:
+        try:
+            from bifidok_be.config import STRICT_PRODUCTION
+        except ImportError:
+            STRICT_PRODUCTION = os.getenv("STRICT_PRODUCTION", "false").lower() in ("true", "1", "yes")
 
     # 1. Check Redis / memory cache
     r = get_redis_client()
@@ -188,11 +151,15 @@ def query_signal_evidence(domain: str) -> Dict[str, Any]:
             pass
 
     # 2. Query database for evaluations
+    close_session = False
     try:
         from db.session import SessionLocal
         from db.schema import Company, SignalEvaluation
 
-        session = SessionLocal()
+        if session is None:
+            session = SessionLocal()
+            close_session = True
+
         try:
             comp = session.query(Company).filter(Company.domain == clean_domain).first()
             if comp:
@@ -220,18 +187,18 @@ def query_signal_evidence(domain: str) -> Dict[str, Any]:
                         ],
                     }
         finally:
-            session.close()
+            if close_session:
+                session.close()
     except Exception as exc:
+        if STRICT_PRODUCTION:
+            raise RuntimeError("Database query failed under STRICT_PRODUCTION.") from exc
         logger.debug("Database query for signal evidence failed (%s)", exc)
-
-    # 3. Canonical accounts fallback
-    if clean_domain in CANONICAL_EVIDENCE:
-        return CANONICAL_EVIDENCE[clean_domain]
 
     return {
         "status": "NOT_FOUND",
         "message": f"No signals evaluated for domain: {domain}",
     }
+
 
 
 def format_grounded_pitch(

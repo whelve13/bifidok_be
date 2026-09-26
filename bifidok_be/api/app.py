@@ -4,7 +4,7 @@ Conforms to Section 2 and Section 5 of Enterprise_AI_Sales_Intelligence_Platform
 """
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -12,11 +12,13 @@ try:
     from api.routes_config import router as config_router
     from api.routes_leads import router as leads_router
     from api.routes_outreach import router as outreach_router
+    from services.diagnostics import run_preflight_checks
 except ImportError:
     from bifidok_be.api.auth import router as auth_router
     from bifidok_be.api.routes_config import router as config_router
     from bifidok_be.api.routes_leads import router as leads_router
     from bifidok_be.api.routes_outreach import router as outreach_router
+    from bifidok_be.services.diagnostics import run_preflight_checks
 
 # Instantiate FastAPI application conforming to Section 2
 app = FastAPI(
@@ -50,3 +52,16 @@ def health():
         "status": "UP",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/healthz")
+def healthz(response: Response):
+    """
+    Comprehensive preflight health check probing Database, Redis, and Gemini.
+    Returns 200 OK if Database is UP, or 503 SERVICE UNAVAILABLE if Database is DOWN.
+    """
+    diag = run_preflight_checks()
+    db_comp = diag.get("components", {}).get("database", {})
+    if db_comp.get("status") == "DOWN":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return diag
