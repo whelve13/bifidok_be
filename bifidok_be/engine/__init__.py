@@ -1,6 +1,4 @@
-"""
-Engine package for scoring, offering catalog, prospecting, and anti-hallucination guardrails.
-"""
+from .anti_hallucination import verify_verbatim_quote
 from .gemini_extractor import (
     extract_signal_evidence,
     verify_verbatim_quote,
@@ -23,8 +21,5 @@ __all__ = [
     "record_lead_feedback",
     "get_lead_feedback",
     "clear_lead_feedback",
-from .anti_hallucination import verify_verbatim_quote
-
-__all__ = [
-    "verify_verbatim_quote",
+    "verify_verbatim_quote"
 ]
