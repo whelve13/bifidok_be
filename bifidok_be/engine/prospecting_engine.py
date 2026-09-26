@@ -16,7 +16,11 @@ from models import (
     PerfectCustomerDossier,
     ProspectingUniverseResult
 )
-from engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from engine.offering_catalog import (
+    FLAGSHIP_OFFERINGS,
+    decompose_custom_offering,
+    offering_dict_to_profile,
+)
 from engine.candidate_pool import get_candidate_universe, find_candidate_by_name
 
 from connectors.firmographics import resolve_company_entity
@@ -36,12 +40,17 @@ class CustomerProspectingEngine:
     def __init__(self):
         pass
 
-    def _resolve_offering(self, offering_input: Union[str, OfferingProfile]) -> OfferingProfile:
+    def _resolve_offering(self, offering_input: Union[str, OfferingProfile, Dict[str, Any]]) -> OfferingProfile:
         if isinstance(offering_input, OfferingProfile):
             return offering_input
+        if isinstance(offering_input, dict):
+            return offering_dict_to_profile(offering_input)
         if offering_input in FLAGSHIP_OFFERINGS:
             return FLAGSHIP_OFFERINGS[offering_input]
-        return decompose_custom_offering(offering_input)
+        compiled = decompose_custom_offering(offering_input)
+        if isinstance(compiled, dict):
+            return offering_dict_to_profile(compiled)
+        return compiled
 
     def prospect_universe(
         self,
