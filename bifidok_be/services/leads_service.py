@@ -110,10 +110,19 @@ def query_prioritized_leads(
                                 else (ls.executive_summary or f"Readiness score {ls.composite_score}")
                             )
                             results.append({
+                                "id": f"lead-{comp.domain.replace('.', '-')}",
                                 "company": comp.name,
+                                "name": comp.name,
                                 "domain": comp.domain,
                                 "score": ls.composite_score,
+                                "overallScore": ls.composite_score,
+                                "industry": comp.industry or "Enterprise Operations",
+                                "headcount": comp.employee_count,
+                                "headquarters": comp.geography or "Europe",
+                                "logo": f"https://logo.clearbit.com/{comp.domain}",
+                                "website": f"https://www.{comp.domain}",
                                 "primary_signal": primary_signal,
+                                "summary": ls.executive_summary or f"{comp.name} exhibits readiness score {ls.composite_score} for {offering.name}.",
                             })
                     return results
             return []
