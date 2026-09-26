@@ -45,3 +45,8 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
+# Documentation & reference files
+docs/
+bifidok_be/docs/
+
+
