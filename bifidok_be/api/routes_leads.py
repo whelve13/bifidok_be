@@ -3,16 +3,19 @@ Leads and signal evidence API routes.
 Conforms to Section 2 and Section 5 of Enterprise_AI_Sales_Intelligence_Platform_Annex.md.
 """
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 try:
+    from db.session import get_db
     from services.leads_service import (
         query_prioritized_leads,
         query_signal_evidence,
         record_lead_feedback,
     )
 except ImportError:
+    from bifidok_be.db.session import get_db
     from bifidok_be.services.leads_service import (
         query_prioritized_leads,
         query_signal_evidence,
@@ -50,21 +53,22 @@ def get_prioritized_leads(
         le=100,
         description="Minimum composite readiness score threshold",
     ),
+    db: Session = Depends(get_db),
 ):
     """
     Discovers top enterprise leads prioritized by verified buying signals.
     """
-    leads = query_prioritized_leads(service_line=service_line, min_score=min_score)
+    leads = query_prioritized_leads(service_line=service_line, min_score=min_score, session=db)
     return leads
 
 
 @router.get("/{domain}/evidence", response_model=Dict[str, Any])
-def get_lead_evidence(domain: str):
+def get_lead_evidence(domain: str, db: Session = Depends(get_db)):
     """
     Retrieves exact verbatim quotes and source links justifying why a company is ready to buy.
     """
     clean_domain = str(domain or "").strip().lower()
-    evidence = query_signal_evidence(clean_domain)
+    evidence = query_signal_evidence(clean_domain, session=db)
     return evidence
 
 

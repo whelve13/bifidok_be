@@ -25,12 +25,14 @@ from services.leads_service import (
     OUTREACH_QUEUE,
 )
 from db.schema import Base, Company, ServiceOffering, LeadScore
+from db.seed import seed_database
 from db.session import SessionLocal, engine
 
 
 class TestFastMCPServer(unittest.TestCase):
     def setUp(self):
         Base.metadata.create_all(bind=engine)
+        seed_database()
         OUTREACH_QUEUE.clear()
 
     def test_registered_tools(self):

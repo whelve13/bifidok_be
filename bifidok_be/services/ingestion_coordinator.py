@@ -36,7 +36,6 @@ from db.schema import (
 )
 from db.session import SessionLocal
 from engine.anti_hallucination import verify_verbatim_quote
-from engine.candidate_pool import ENTERPRISE_UNIVERSE, find_candidate_by_name
 from engine.offering_catalog import (
     FLAGSHIP_OFFERINGS,
     decompose_custom_offering,
@@ -466,23 +465,28 @@ def _process_domain_sync(
     """
     clean_domain = domain.strip().lower()
 
-    # 1. Firmographics & Entity Resolution
+    # 1. Firmographics & Entity Resolution via Database
     cand = None
-    for c in ENTERPRISE_UNIVERSE:
-        c_dom = str(c.get("domain") or "").strip().lower()
-        if c_dom and (clean_domain == c_dom or clean_domain.endswith(f".{c_dom}") or c_dom in clean_domain):
-            cand = c
-            break
-    if not cand:
-        cand = find_candidate_by_name(clean_domain)
+    session_comp = SessionLocal()
+    try:
+        companies = session_comp.query(Company).all()
+        for c in companies:
+            c_dom = str(c.domain or "").strip().lower()
+            if c_dom and (clean_domain == c_dom or clean_domain.endswith(f".{c_dom}") or c_dom in clean_domain):
+                cand = {"name": c.name, "domain": c.domain}
+                break
+        if not cand:
+            for c in companies:
+                c_name = str(c.name or "").strip().lower()
+                if c_name and (clean_domain in c_name or c_name in clean_domain):
+                    cand = {"name": c.name, "domain": c.domain}
+                    break
+    finally:
+        session_comp.close()
 
-    from services.leads_service import CANONICAL_EVIDENCE
-    canonical_entry = CANONICAL_EVIDENCE.get(clean_domain)
-
+    canonical_entry = None
     if cand and cand.get("name"):
         company_name = cand["name"]
-    elif canonical_entry and canonical_entry.get("company"):
-        company_name = canonical_entry["company"]
     else:
         company_name = clean_domain.split(".")[0].replace("-", " ").title()
 
