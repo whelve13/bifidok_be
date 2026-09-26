@@ -4,9 +4,12 @@ from typing import Dict, Any, Optional
 import yfinance as yf
 from services.cache import get_cache, set_cache
 
-logger = logging.getLogger(__name__)
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+logger = logging.getLogger(__name__)
 
 
 def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
@@ -25,6 +28,8 @@ def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
         "evidence": [],
     }
 
+    session = get_resilient_session()
+
     # Step 1: Resolve Ticker via Yahoo Finance Search API (Row 6)
     search_cache_key = f"cache:yahoo_search:{company_name.strip().lower()}"
     cached_search = get_cache(search_cache_key)
@@ -35,7 +40,7 @@ def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
     else:
         try:
             search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}&quotesCount=1"
-            resp = requests.get(search_url, headers=HEADERS, timeout=5)
+            resp = resilient_get(search_url, requests_get_fn=requests.get, session=session, timeout=5)
             if resp.status_code == 200:
                 search_data = resp.json()
                 set_cache(search_cache_key, search_data, ttl=86400)

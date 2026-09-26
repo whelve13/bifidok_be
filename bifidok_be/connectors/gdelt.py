@@ -7,12 +7,13 @@ import logging
 import urllib.parse
 from typing import Any, Dict, List, Optional
 import requests
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
 
 
 def fetch_gdelt_signals(
@@ -50,7 +51,7 @@ def fetch_gdelt_signals(
 
     results: List[Dict[str, Any]] = []
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=6)
+        resp = resilient_get(url, requests_get_fn=requests.get, timeout=8)
         if resp.status_code == 200 and resp.text.strip():
             try:
                 data = resp.json()

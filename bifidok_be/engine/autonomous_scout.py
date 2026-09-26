@@ -125,9 +125,9 @@ def discover_candidate_universe(
                 "domain": entity.get("domain", f"{item['name'].lower().replace(' ', '')}.com"),
                 "legal_name": entity.get("legal_name", item["name"]),
                 "country": entity.get("country", "EU"),
-                "headcount": 15000,  # default enterprise estimate
-                "sector": query_info["sector"],
-                "ticker": None,
+                "headcount": entity.get("headcount"),
+                "sector": entity.get("sector") or query_info["sector"],
+                "ticker": entity.get("ticker"),
                 "description": entity.get("description", f"Enterprise operating in {query_info['sector']}."),
                 "is_solvent": True,
                 "operational_attributes": {

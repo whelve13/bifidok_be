@@ -1,7 +1,11 @@
 import requests
 from typing import Dict, Any, Optional
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+try:
+    from services.proxy_manager import get_resilient_session
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session
+
 
 def verify_official_registry(company_name: str) -> Dict[str, Any]:
     """
@@ -16,17 +20,19 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
         "registration_id": None,
         "is_active": True,
         "is_solvent": True,
+        "is_verified": False,
         "employee_range": None,
         "industry_code": None,
-        "evidence": []
+        "evidence": [],
     }
 
     clean_name = company_name.strip()
+    session = get_resilient_session()
 
     # 1. French SIRENE API (data.gouv.fr - Row 31)
     try:
         url = f"https://recherche-entreprises.api.gouv.fr/search?q={clean_name}&per_page=5"
-        resp = requests.get(url, headers=HEADERS, timeout=4)
+        resp = session.get(url, timeout=4)
         if resp.status_code == 200:
             results = resp.json().get("results", [])
             # Find an entry whose name actually matches the company name
@@ -45,9 +51,10 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
                 etat = matched_entry.get("etat_administratif", "A")
                 result["is_active"] = (etat == "A")
                 result["is_solvent"] = (etat == "A")
+                result["is_verified"] = True
                 result["employee_range"] = matched_entry.get("tranche_effectif_salarie")
                 result["industry_code"] = f"NAF {matched_entry.get('activite_principale')}"
-                
+
                 status_str = "Active & In Good Standing" if result["is_active"] else "Ceased / Insolvent"
                 result["evidence"].append(
                     f"SIRENE Registry: {result['legal_name']} ({result['registration_id']}) - Status: {status_str}, Code: {result['industry_code']}."
@@ -59,7 +66,7 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
     # 2. Norwegian Brønnøysundregistrene (data.brreg.no - Row 34)
     try:
         url = f"https://data.brreg.no/enhetsregisteret/api/enheter?navn={clean_name}"
-        resp = requests.get(url, headers=HEADERS, timeout=4)
+        resp = session.get(url, timeout=4)
         if resp.status_code == 200:
             embedded = resp.json().get("_embedded", {})
             enheter = embedded.get("enheter", [])
@@ -70,6 +77,7 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
                 result["registration_id"] = f"OrgNr {top.get('organisasjonsnummer')}"
                 result["is_active"] = not top.get("underAvvikling", False) and not top.get("konkurs", False)
                 result["is_solvent"] = result["is_active"]
+                result["is_verified"] = True
                 result["employee_range"] = str(top.get("antallAnsatte")) if top.get("antallAnsatte") else None
                 naering = top.get("naeringskode1", {})
                 if naering:
@@ -83,5 +91,6 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    result["evidence"].append("Pan-European registry cross-check completed (EU entity verified).")
+    result["is_verified"] = False
+    result["evidence"].append("Official European corporate registry records not found for this legal entity name.")
     return result

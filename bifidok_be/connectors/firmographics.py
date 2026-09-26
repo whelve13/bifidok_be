@@ -4,9 +4,14 @@ import requests
 from typing import Dict, Any, Optional
 from services.cache import get_cache, set_cache
 
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
+
 logger = logging.getLogger(__name__)
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+WIKI_USER_AGENT = "OrangeSystemsSalesIntelligence/1.0 (compliance@orangesystems.eu; European Market Intel)"
 
 
 def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None) -> Dict[str, Any]:
@@ -21,6 +26,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
         "description": "",
         "country": "EU",
     }
+    session = get_resilient_session(user_agent=WIKI_USER_AGENT)
 
     # 1. Clearbit Autocomplete (Row 44 of XLSX)
     if not resolved["domain"]:
@@ -33,7 +39,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
         else:
             try:
                 url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={company_name}"
-                resp = requests.get(url, headers=HEADERS, timeout=4)
+                resp = resilient_get(url, requests_get_fn=requests.get, session=session, timeout=4)
                 if resp.status_code == 200:
                     data = resp.json()
                     set_cache(clearbit_cache_key, data, ttl=86400)
@@ -67,7 +73,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
     else:
         try:
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{wiki_title}"
-            resp = requests.get(url, headers=HEADERS, timeout=4)
+            resp = resilient_get(url, requests_get_fn=requests.get, session=session, timeout=4)
             if resp.status_code == 200:
                 wdata = resp.json()
                 set_cache(wiki_cache_key, wdata, ttl=86400)
