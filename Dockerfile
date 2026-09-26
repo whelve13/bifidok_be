@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 
 # Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -u 1001 appuser
+RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m -s /bin/bash appuser
 
 # Copy application source code
 COPY bifidok_be /app/bifidok_be

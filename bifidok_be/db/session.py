@@ -26,9 +26,33 @@ def create_resilient_engine():
     strict_prod = os.getenv("STRICT_PRODUCTION", "").lower() in ("true", "1") or os.getenv("ENVIRONMENT") == "production"
 
     if db_url:
+        # Check available PostgreSQL drivers
+        has_psycopg = False
+        try:
+            import psycopg  # psycopg 3
+            has_psycopg = True
+        except ImportError:
+            pass
+
+        has_psycopg2 = False
+        try:
+            import psycopg2  # psycopg 2
+            has_psycopg2 = True
+        except ImportError:
+            pass
+
         # Normalize legacy Heroku/AWS postgres:// scheme
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+        # In SQLAlchemy 2.0+, 'postgresql://' defaults to 'psycopg' (v3).
+        # If 'psycopg' is missing but 'psycopg2' is available, adjust driver prefix.
+        if db_url.startswith("postgresql://") and not any(
+            db_url.startswith(p)
+            for p in ("postgresql+psycopg://", "postgresql+psycopg2://", "postgresql+asyncpg://")
+        ):
+            if not has_psycopg and has_psycopg2:
+                db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
         try:
             connect_args = {}
