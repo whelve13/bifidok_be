@@ -14,13 +14,18 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
-from engine.prospecting_engine import CustomerProspectingEngine
 from engine.offering_catalog import (
     FLAGSHIP_OFFERINGS,
+    OfferingProfile,
     decompose_custom_offering,
     offering_dict_to_profile,
 )
 from models import PerfectCustomerDossier, ProspectingUniverseResult
+from db.seed import seed_database
+from services.diagnostics import run_preflight_checks
+from services.leads_service import query_prioritized_leads, query_signal_evidence
+from db.session import SessionLocal
+from db.schema import Company, ServiceOffering, LeadScore, SignalEvaluation
 
 from connectors.financials import fetch_financial_signals
 from connectors.news import fetch_company_news
@@ -32,8 +37,7 @@ from connectors.vulnerabilities import evaluate_vulnerability_exposure
 from connectors.tenders import fetch_public_procurement_tenders
 
 console = Console()
-engine = CustomerProspectingEngine()
-LAST_RESULTS: Optional[ProspectingUniverseResult] = None
+LAST_RESULTS: Any = None
 
 def display_offerings_catalog():
     table = Table(title="[bold cyan]Orange Systems Commercial Offerings Catalog[/bold cyan]", box=box.ROUNDED)
@@ -118,61 +122,183 @@ def render_dossier(dossier: PerfectCustomerDossier, rank: int = 1):
     console.print(Panel(dossier.strategic_pitch_narrative, title="[bold green]Executive Strategic Pitch Narrative[/bold green]", border_style="green"))
     console.print("\n" + "-" * 75 + "\n")
 
-def prospect_and_render(offering_key: str):
+def prospect_and_render(offering_input: Any):
+    if isinstance(offering_input, str):
+        offering_key = offering_input.strip()
+    elif hasattr(offering_input, "title"):
+        offering_key = offering_input.title
+    else:
+        offering_key = str(offering_input)
+
     console.print(f"\n[bold green]>>> Prospecting customer universe for offering: '{offering_key}'...[/bold green]")
     global LAST_RESULTS
-    with console.status("[bold cyan]Scanning enterprise candidates, harvesting live connectors, computing multidimensional fit...", spinner="dots"):
-        result = engine.prospect_universe(offering_key)
-        LAST_RESULTS = result
+    with console.status("[bold cyan]Scanning enterprise candidates and retrieving scored leads from database...", spinner="dots"):
+        leads = query_prioritized_leads(offering_key, min_score=0)
+        LAST_RESULTS = leads
 
-    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{result.offering.title}[/bold cyan] ({result.offering.category})")
-    console.print(f"Total Candidates Evaluated: {result.total_evaluated}  |  Tier 1 Prime Targets: {result.tier1_count}  |  Tier 2 Strategic: {result.tier2_count}\n")
+    if not leads:
+        console.print(f"[yellow]No qualified leads found in database for '{offering_key}'.[/yellow]")
+        console.print("[dim]Tip: Seed standard enterprise data by running: python cli.py seed[/dim]\n")
+        return
 
-    # Render summary table of ranked candidates
-    summary_table = Table(title=f"Ranked Customer Universe - {result.offering.title}", box=box.HEAVY_EDGE)
+    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{offering_key}[/bold cyan]")
+    console.print(f"Total Qualified Leads: {len(leads)}\n")
+
+    summary_table = Table(title=f"Ranked Customer Universe - {offering_key}", box=box.HEAVY_EDGE)
     summary_table.add_column("Rank", justify="right", style="bold")
     summary_table.add_column("Company", style="bold white")
     summary_table.add_column("Domain", style="dim")
-    summary_table.add_column("Score", justify="right")
+    summary_table.add_column("Propensity Score", justify="right")
     summary_table.add_column("Tier", style="cyan")
-    summary_table.add_column("Primary Commercial Wedge", style="yellow")
-    summary_table.add_column("Solvent", justify="center")
+    summary_table.add_column("Primary Signal / Rationale", style="yellow")
 
-    for i, c in enumerate(result.ranked_customers, 1):
-        score_color = "bold green" if c.propensity_score >= 70 else ("bold yellow" if c.propensity_score >= 50 else "bold red")
-        solvent_badge = "[green]Yes[/green]" if c.company.is_solvent else "[red]Insolvent[/red]"
+    for i, lead in enumerate(leads, 1):
+        score = float(lead.get("score", 0.0))
+        score_color = "bold green" if score >= 70 else ("bold yellow" if score >= 50 else "bold red")
+        tier = "Tier 1 - Prime Target" if score >= 75 else ("Tier 2 - Strategic" if score >= 50 else "Tier 3 - Nurture")
         summary_table.add_row(
             str(i),
-            c.company.name,
-            c.company.domain,
-            f"[{score_color}]{c.propensity_score:.1f}[/{score_color}]",
-            c.tier,
-            c.primary_commercial_wedge.name,
-            solvent_badge
+            lead.get("company", "Unknown"),
+            lead.get("domain", ""),
+            f"[{score_color}]{score:.1f}[/{score_color}]",
+            tier,
+            lead.get("primary_signal", "")[:75]
         )
     console.print(summary_table)
 
-    # Ask user if they want to inspect a detailed dossier
     inspect_choice = Prompt.ask("\nEnter Rank # to view full dossier (or press Enter to return to menu)", default="")
     if inspect_choice.isdigit():
         idx = int(inspect_choice) - 1
-        if 0 <= idx < len(result.ranked_customers):
-            render_dossier(result.ranked_customers[idx], rank=idx+1)
+        if 0 <= idx < len(leads):
+            chosen = leads[idx]
+            evaluate_single_account(chosen.get("company", ""), offering_key, chosen.get("domain"))
+
 
 def evaluate_single_account(company_name: str, offering_key: str = "commercial_bikes", domain_hint: Optional[str] = None):
     console.print(f"\n[bold green]>>> Deep-diving account '{company_name}' fit for '{offering_key}'...[/bold green]")
-    with console.status(f"[bold cyan]Harvesting signals and building operational dossier for {company_name}...", spinner="dots"):
-        dossier = engine.evaluate_single_company(company_name, offering_key, domain_hint)
-    render_dossier(dossier, rank=1)
+    clean_target = company_name.strip().lower()
+    session = SessionLocal()
+    try:
+        query = session.query(Company).filter(
+            (Company.name.ilike(f"%{clean_target}%")) |
+            (Company.domain.ilike(f"%{clean_target}%"))
+        )
+        if domain_hint:
+            clean_dom = domain_hint.strip().lower()
+            query = session.query(Company).filter(
+                (Company.domain == clean_dom) |
+                (Company.name.ilike(f"%{clean_target}%"))
+            )
+        comp = query.first()
+        if not comp:
+            console.print(f"[bold red]Company '{company_name}' not found in database.[/bold red]")
+            console.print("[dim]Tip: Seed canonical accounts with: python cli.py seed[/dim]")
+            return
+
+        lead_score = (
+            session.query(LeadScore)
+            .filter(LeadScore.company_id == comp.id)
+            .order_by(LeadScore.composite_score.desc())
+            .first()
+        )
+        score = float(lead_score.composite_score) if lead_score else 0.0
+
+        evals = (
+            session.query(SignalEvaluation)
+            .filter(SignalEvaluation.company_id == comp.id)
+            .order_by(SignalEvaluation.confidence.desc())
+            .all()
+        )
+
+        score_color = "bold green" if score >= 75 else ("bold yellow" if score >= 50 else "bold red")
+        tier = "Tier 1 - Prime Target" if score >= 75 else ("Tier 2 - Strategic Opportunity" if score >= 50 else "Tier 3 - Nurture")
+        border_color = "green" if score >= 70 else ("yellow" if score >= 50 else "red")
+
+        header_text = Text()
+        header_text.append(f"{comp.name} ({comp.domain})\n", style="bold white")
+        header_text.append(f"Sector: {comp.industry or 'Enterprise'}  |  Geography: {comp.geography or 'DE'}  |  Employees: {comp.employee_count or 'N/A'}\n", style="dim")
+        header_text.append("Propensity Score: ", style="bold")
+        header_text.append(f"{score:.1f}/100", style=score_color)
+        header_text.append(f"  [{tier}]\n", style="bold cyan")
+        if lead_score and lead_score.executive_summary:
+            header_text.append(f"Executive Summary: {lead_score.executive_summary}", style="italic")
+
+        console.print(Panel(header_text, title=f"[bold]Account Dossier - {comp.name}[/bold]", border_style=border_color))
+
+        if evals:
+            ev_table = Table(title=f"Harvested Verified Signal Evidence ({len(evals)} signals)", box=box.HORIZONTALS)
+            ev_table.add_column("Detected", justify="center", width=10)
+            ev_table.add_column("Confidence", justify="right", width=12)
+            ev_table.add_column("Verbatim Evidence Quote", style="white")
+            ev_table.add_column("Source URL", style="dim", width=30)
+
+            for ev in evals:
+                det_badge = "[green]YES[/green]" if ev.detected else "[red]NO[/red]"
+                conf_str = f"{ev.confidence * 100:.0f}%"
+                ev_table.add_row(det_badge, conf_str, (ev.evidence_quote[:120] + "...") if len(ev.evidence_quote) > 120 else ev.evidence_quote, ev.source_url or "N/A")
+            console.print(ev_table)
+        else:
+            console.print("[dim]No signal evaluations recorded for this company yet.[/dim]")
+
+        console.print("\n" + "-" * 75 + "\n")
+    finally:
+        session.close()
+
 
 def export_last_result():
     if not LAST_RESULTS:
         console.print("[red]No prospecting run available to export. Run option 1 first![/red]")
         return
-    filename = f"prospecting_dossiers_{LAST_RESULTS.offering.offering_id}.json"
+    filename = "prospecting_leads_export.json"
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(LAST_RESULTS.model_dump_json(indent=2))
-    console.print(f"[bold green]Successfully exported {len(LAST_RESULTS.ranked_customers)} dossiers to '{filename}'[/bold green]")
+        if hasattr(LAST_RESULTS, "model_dump_json"):
+            f.write(LAST_RESULTS.model_dump_json(indent=2))
+        else:
+            json.dump(LAST_RESULTS, f, indent=2)
+    console.print(f"[bold green]Successfully exported results to '{filename}'[/bold green]")
+
+
+def run_doctor():
+    console.print("\n[bold cyan]>>> Running preflight health diagnostics...[/bold cyan]")
+    diag = run_preflight_checks()
+    status_color = "green" if diag["status"] == "HEALTHY" else ("yellow" if diag["status"] == "DEGRADED" else "red")
+    console.print(Panel(
+        f"[bold {status_color}]System Status: {diag['status']}[/bold {status_color}]\nTimestamp: {diag.get('timestamp', '')}",
+        title="Preflight Diagnostics",
+        border_style=status_color,
+    ))
+
+    table = Table(title="Component Health Probes", box=box.ROUNDED)
+    table.add_column("Component", style="bold white")
+    table.add_column("Status", justify="center")
+    table.add_column("Details", style="dim")
+
+    for comp, details in diag.get("components", {}).items():
+        c_status = details.get("status", "UNKNOWN")
+        c_color = "green" if c_status in ("UP", "CONFIGURED") else ("yellow" if c_status == "NOT_CONFIGURED" else "red")
+        extra = []
+        if "company_count" in details:
+            extra.append(f"companies: {details['company_count']}")
+        if "dialect" in details:
+            extra.append(f"dialect: {details['dialect']}")
+        if "error" in details and details["error"]:
+            extra.append(f"error: {details['error']}")
+        if "key_configured" in details:
+            extra.append(f"configured: {details['key_configured']}")
+        if "connected" in details:
+            extra.append(f"connected: {details['connected']}")
+        info = "; ".join(extra) if extra else "-"
+        table.add_row(comp.capitalize(), f"[{c_color}]{c_status}[/{c_color}]", info)
+
+    console.print(table)
+
+
+def run_seed():
+    console.print("\n[bold cyan]>>> Seeding database with canonical enterprise data...[/bold cyan]")
+    counts = seed_database()
+    console.print("[bold green]Database successfully seeded:[/bold green]")
+    for k, v in counts.items():
+        console.print(f"  • {k}: {v}")
 
 def test_individual_connectors():
     company = Prompt.ask("Enter company name to test", default="DHL Group")
@@ -370,9 +496,11 @@ def interactive_menu():
         console.print("  [bold green][4][/bold green] Custom Commercial Offering (Interactive Rule Configurator & Prospecting)")
         console.print("  [bold green][5][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
         console.print("  [bold green][6][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
+        console.print("  [bold green][7][/bold green] Run Preflight Diagnostics (Doctor)")
+        console.print("  [bold green][8][/bold green] Seed Database with Canonical Data")
         console.print("  [bold red][0][/bold red] Exit")
 
-        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6"], default="1")
+        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"], default="1")
 
         if choice == "0":
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
@@ -425,6 +553,10 @@ def interactive_menu():
             test_individual_connectors()
         elif choice == "6":
             export_last_result()
+        elif choice == "7":
+            run_doctor()
+        elif choice == "8":
+            run_seed()
 
 def main():
     parser = argparse.ArgumentParser(description="Orange Systems Autonomous Customer Prospecting CLI")
@@ -432,6 +564,12 @@ def main():
 
     # Command: menu
     subparsers.add_parser("menu", help="Launch interactive navigation menu")
+
+    # Command: doctor
+    subparsers.add_parser("doctor", help="Run preflight system health diagnostics")
+
+    # Command: seed
+    subparsers.add_parser("seed", help="Seed database with canonical offerings, rules, companies, and evaluations")
 
     # Command: offerings
     subparsers.add_parser("offerings", help="List commercial offerings and buyer archetypes")
@@ -454,6 +592,10 @@ def main():
 
     if args.command is None or args.command == "menu":
         interactive_menu()
+    elif args.command == "doctor":
+        run_doctor()
+    elif args.command == "seed":
+        run_seed()
     elif args.command == "offerings":
         display_offerings_catalog()
     elif args.command == "prospect":
