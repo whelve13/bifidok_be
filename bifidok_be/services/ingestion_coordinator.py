@@ -339,17 +339,10 @@ def compute_3_layer_composite_score(
     catalysts: Dict[str, Any],
 ) -> Tuple[int, bool, Optional[str], str]:
     """
-    Computes the 3-Layer Composite Lead Propensity Score:
-    - Layer 1: Rule-Based Signal Engine (Section 4.2 Deterministic Logic)
-    - Layer 2: Firmographic & Financial Capacity (Solvency, Headcount, Operating Margin)
-    - Layer 3: Dynamic Intent & Buying Velocity (ATS hiring roles, Tenders, Press Momentum)
-
-    Returns:
-        (composite_score: int [0-100], is_disqualified: bool, disqualification_reason: Optional[str], summary: str)
+    Computes the Lead Propensity Score using trained Local Machine Learning Models (LightGBM & LogisticRegression),
+    replacing hardcoded static weights with learned ML inference.
     """
-    # ----------------------------------------------------
     # HARD GATE CHECK: Solvency & Bankruptcy
-    # ----------------------------------------------------
     if not firmographics.get("is_solvent", True):
         return (
             0,
@@ -358,96 +351,42 @@ def compute_3_layer_composite_score(
             "Disqualified: Credit/insolvency risk prohibits commercial contract approval.",
         )
 
-    # ----------------------------------------------------
-    # LAYER 1: Rule-Based Signal Evaluation (Annex 4.2)
-    # S = max(0, min(100, sum(Pos * Conf) - sum(Neg * Conf)))
-    # ----------------------------------------------------
-    pos_sum = 0.0
-    neg_sum = 0.0
-    is_disqualified = False
-    disqualification_reason = None
-
     for ev in evaluations:
-        if not ev.get("detected"):
-            continue
-        weight = ev.get("weight", "MEDIUM")
+        weight = str(ev.get("weight", "")).upper()
         conf = float(ev.get("confidence", 0.0))
-        is_neg = bool(ev.get("is_negative", False))
+        if ev.get("detected") and (weight == "DISQUALIFY" or "bankruptcy" in str(ev.get("question", "")).lower()) and conf >= 0.80:
+            reason = f"Disqualifying rule triggered ({ev.get('question', 'Negative gate')}) with confidence {conf:.2f}."
+            return (0, True, reason, "Disqualified by high-confidence negative indicator.")
 
-        if weight == "DISQUALIFY" and conf >= 0.80:
-            is_disqualified = True
-            disqualification_reason = (
-                f"Disqualifying rule triggered ({ev.get('question', 'Negative gate')}) with confidence {conf:.2f}."
-            )
-            return (0, True, disqualification_reason, "Disqualified by high-confidence negative indicator.")
+    from engine.local_ml.inference import predict_lead_evaluation
 
-        if is_neg:
-            neg_sum += CONFIDENCE_PENALTY_BASE * conf
-        else:
-            wt_val = WEIGHT_VALUES.get(weight, 20.0)
-            pos_sum += wt_val * conf
+    signals = {
+        "matched_roles": catalysts.get("matched_roles", []),
+        "has_tenders": catalysts.get("has_tenders", False),
+        "has_official_award": catalysts.get("has_official_award", False),
+        "has_news": catalysts.get("has_news", False),
+        "security_grade": catalysts.get("security_grade", "B"),
+        "missing_headers": catalysts.get("missing_headers", []),
+        "cisa_kev_count": catalysts.get("cisa_kev_count", 0),
+        "semantic_relevance": max([float(e.get("confidence", 0.7)) for e in evaluations], default=0.75),
+    }
 
-    layer1_score = max(0.0, min(100.0, pos_sum - neg_sum))
+    ml_res = predict_lead_evaluation(
+        company=firmographics,
+        signals=signals,
+    )
 
-    # ----------------------------------------------------
-    # LAYER 2: Firmographic & Financial Capacity Fit
-    # ----------------------------------------------------
-    headcount = firmographics.get("headcount") or 500
-    op_margin = firmographics.get("operating_margin")
-
-    layer2_score = 20.0  # baseline
-    if headcount >= 10000:
-        layer2_score += 40.0
-    elif headcount >= 1000:
-        layer2_score += 25.0
-    elif headcount >= 100:
-        layer2_score += 15.0
-
-    if op_margin is not None:
-        if op_margin >= 0.15:
-            layer2_score += 40.0  # Strong capital/budget capacity
-        elif op_margin > 0.0:
-            layer2_score += 25.0  # Cost-reduction / margin pressure
-        else:
-            layer2_score += 10.0
-    else:
-        layer2_score += 25.0
-
-    layer2_score = max(0.0, min(100.0, layer2_score))
-
-    # ----------------------------------------------------
-    # LAYER 3: Dynamic Public Intent & Velocity
-    # ----------------------------------------------------
-    matched_roles = catalysts.get("matched_roles", [])
-    has_tenders = catalysts.get("has_tenders", False)
-    has_news = catalysts.get("has_news", False)
-
-    layer3_score = 15.0
-    if matched_roles:
-        layer3_score += min(45.0, 15.0 + (10.0 * len(matched_roles)))
-    if has_tenders:
-        layer3_score += 25.0
-    if has_news:
-        layer3_score += 15.0
-
-    layer3_score = max(0.0, min(100.0, layer3_score))
-
-    # ----------------------------------------------------
-    # FINAL COMPOSITE SYNTHESIS
-    # ----------------------------------------------------
-    if evaluations:
-        blended = (0.50 * layer1_score) + (0.25 * layer2_score) + (0.25 * layer3_score)
-    else:
-        blended = (0.60 * layer2_score) + (0.40 * layer3_score)
-
-    composite_score = int(round(max(0, min(100, blended))))
+    composite_score = int(round(ml_res["propensity_score"]))
+    is_disqualified = ml_res["is_disqualified"]
+    disq_reason = ml_res["disqualification_reason"]
+    sb = ml_res["score_breakdown"]
 
     summary = (
         f"Composite Score: {composite_score}/100 "
-        f"[Layer 1 Signals: {layer1_score:.0f}, Layer 2 Firmographics: {layer2_score:.0f}, Layer 3 Intent: {layer3_score:.0f}]"
+        f"[Layer 1 Signals: {sb['operational_fit']:.0f}, Layer 2 Firmographics: {sb['purchasing_scale']:.0f}, Layer 3 Intent: {sb['timing_urgency']:.0f}]"
     )
 
-    return (composite_score, False, None, summary)
+    return (composite_score, is_disqualified, disq_reason, summary)
 
 
 def _process_domain_sync(
