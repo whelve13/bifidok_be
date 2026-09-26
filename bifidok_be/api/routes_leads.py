@@ -7,11 +7,17 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 try:
-    from services.leads_service import query_prioritized_leads, query_signal_evidence
-    from engine.scoring_service import record_lead_feedback
+    from services.leads_service import (
+        query_prioritized_leads,
+        query_signal_evidence,
+        record_lead_feedback,
+    )
 except ImportError:
-    from bifidok_be.services.leads_service import query_prioritized_leads, query_signal_evidence
-    from bifidok_be.engine.scoring_service import record_lead_feedback
+    from bifidok_be.services.leads_service import (
+        query_prioritized_leads,
+        query_signal_evidence,
+        record_lead_feedback,
+    )
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 

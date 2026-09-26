@@ -24,8 +24,12 @@ from api.app import app
 from api.auth import generate_api_key, get_authenticated_tenant
 from db.schema import Base, MCPApiKey
 from db.session import get_db
-from engine.scoring_service import clear_lead_feedback, get_lead_feedback
-from services.leads_service import OUTREACH_QUEUE, queue_sales_outreach
+from services.leads_service import (
+    OUTREACH_QUEUE,
+    queue_sales_outreach,
+    clear_lead_feedback,
+    get_lead_feedback,
+)
 
 
 class TestApiEndpoints(unittest.TestCase):
