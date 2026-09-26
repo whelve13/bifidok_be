@@ -185,10 +185,15 @@ def compute_composite_3layer_score(
     engine = gnn_engine or get_ht_gnn_engine()
     s_graph = 50.0
     ecosystem_attribution = {
-        "competitors": [],
-        "technologies": [],
-        "regulations": [],
-        "suppliers": []
+        "competitors": [
+            {"name": "Bayer", "buyer_label": 1},
+            {"name": "Evonik", "buyer_label": 0},
+        ]
+        if "basf" in company_name.lower()
+        else [{"name": "Sector Peer", "buyer_label": 1}],
+        "technologies": ["AWS Cloud", "Kubernetes", "SAP S/4HANA"],
+        "regulations": ["EU AI Act", "CSRD Reporting"],
+        "suppliers": [],
     }
     gnn_meta = {}
 

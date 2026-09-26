@@ -1,3 +1,4 @@
+import re
 import requests
 from typing import Dict, Any, List
 
@@ -18,7 +19,9 @@ def fetch_developer_signals(company_name: str) -> Dict[str, Any]:
         "evidence": []
     }
 
-    clean_slug = company_name.lower().replace(" ", "").replace("-", "").replace("ag", "").replace("se", "")
+    # Strip common corporate suffixes at word boundaries without damaging company names
+    slug_base = re.sub(r'\b(ag|se|gmbh|sa|holding|group|corp|inc|co|plc|nv|bv)\b', '', company_name, flags=re.IGNORECASE)
+    clean_slug = re.sub(r'[^a-zA-Z0-9]', '', slug_base).lower()
 
     # 1. GitHub Public Org API (Row 41)
     try:

@@ -1,3 +1,4 @@
+import re
 import requests
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, List
@@ -12,7 +13,9 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
     if keywords is None:
         keywords = ["uipath", "celonis", "rpa", "process mining", "automation", "ai", "cloud"]
 
-    clean_slug = company_name.lower().replace(" ", "").replace("-", "").replace("ag", "").replace("se", "")
+    # Strip common corporate suffixes at word boundaries without damaging company names (e.g. Volkswagen, Siemens)
+    slug_base = re.sub(r'\b(ag|se|gmbh|sa|holding|group|corp|inc|co|plc|nv|bv)\b', '', company_name, flags=re.IGNORECASE)
+    clean_slug = re.sub(r'[^a-zA-Z0-9]', '', slug_base).lower()
     
     results = {
         "ats_provider": None,
