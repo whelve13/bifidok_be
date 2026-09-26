@@ -1,0 +1,4 @@
+"""
+Bifidok Backend - Enterprise AI Sales Intelligence Platform.
+"""
+__version__ = "0.1.0"

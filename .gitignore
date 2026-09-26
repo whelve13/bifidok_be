@@ -49,4 +49,11 @@ Thumbs.db
 docs/
 bifidok_be/docs/
 
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Runtime logs & data feedback
+*.jsonl
 
