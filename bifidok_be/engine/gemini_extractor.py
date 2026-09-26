@@ -244,11 +244,15 @@ CRITICAL GROUNDING RULES:
     data = None
     for target_model in models_to_try:
         try:
-            from google.genai import types
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.0,
-            )
+            try:
+                from google.genai import types
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.0,
+                )
+            except Exception:
+                config = None
+
             response = active_client.models.generate_content(
                 model=target_model,
                 contents=prompt,

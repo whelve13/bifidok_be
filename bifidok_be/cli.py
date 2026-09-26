@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 import json
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 # Add current directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -21,7 +21,11 @@ from rich.prompt import Prompt
 from rich import box
 
 from engine.prospecting_engine import CustomerProspectingEngine
-from engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from engine.offering_catalog import (
+    FLAGSHIP_OFFERINGS,
+    decompose_custom_offering,
+    offering_dict_to_profile,
+)
 from engine.gemini_extractor import extract_signal_evidence, verify_verbatim_quote
 from engine.scoring_service import (
     calculate_deterministic_score,
@@ -339,6 +343,7 @@ def render_gnn_prediction(company_name: str):
     console.print(table)
     console.print(Panel(pred["grounded_pitch"], title="[bold green]Graph-Grounded Value Proposition[/bold green]", border_style="green"))
 
+
 def render_3layer_hybrid_scoring(target_company: Optional[str] = None):
     console.print("\n" + "=" * 75)
     console.print(Panel.fit(
@@ -532,6 +537,129 @@ def render_3layer_hybrid_scoring(target_company: Optional[str] = None):
         )
         console.print(f"[bold green][OK] Feedback successfully logged with ID: {rec['feedback_id']} (stored in data/lead_feedback.jsonl)[/bold green]")
 
+
+def render_compiled_rules_table(compiled: Dict[str, Any]):
+    console.print(Panel.fit(
+        f"[bold cyan]Compiled Commercial Offering Draft: {compiled.get('offering_name', 'Custom Offering')}[/bold cyan]\n"
+        f"[dim]{compiled.get('description', '')}[/dim]",
+        border_style="cyan"
+    ))
+
+    table = Table(title="Configured Signal Rules & Weights", box=box.ASCII, expand=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Signal Question / Business Criterion", style="bold white", ratio=5)
+    table.add_column("Guidance Notes", style="dim", ratio=3)
+    table.add_column("Weight", style="bold yellow", ratio=2)
+    table.add_column("Polarity", style="cyan", ratio=2)
+
+    for idx, rule in enumerate(compiled.get("signal_rules", []), start=1):
+        weight = rule.get("weight", "MEDIUM")
+        weight_style = "bold red" if weight == "DISQUALIFY" else ("bold green" if weight == "HIGH" else "yellow")
+        polarity = "[red]Negative[/red]" if rule.get("is_negative") else "[green]Positive[/green]"
+        table.add_row(
+            str(idx),
+            rule.get("question", ""),
+            rule.get("guidance_notes", ""),
+            f"[{weight_style}]{weight}[/{weight_style}]",
+            polarity
+        )
+    console.print(table)
+
+
+def run_custom_offering_workflow(initial_prompt: Optional[str] = None):
+    """
+    Prompts user for commercial mandate, displays compiled draft rules and weights,
+    presents interactive edit step, and runs autonomous prospecting scan.
+    """
+    if initial_prompt and initial_prompt.strip():
+        user_input = initial_prompt.strip()
+    else:
+        user_input = Prompt.ask(
+            "\n[bold yellow]What product, service, or commercial mandate do you want to sell?[/bold yellow]\n"
+            "[dim](e.g. 'Warehouse Robotics', 'Commercial Solar Panels', 'Electric Delivery Vans')[/dim]\n"
+            "Enter product/service"
+        )
+
+    if not user_input.strip():
+        console.print("[red]No product or service entered. Returning to menu.[/red]")
+        return
+
+    console.print(f"\n[bold cyan]>>> Compiling custom offering specification for '{user_input}'...[/bold cyan]")
+    compiled = decompose_custom_offering(user_input)
+
+    while True:
+        console.print()
+        render_compiled_rules_table(compiled)
+
+        console.print("\n[bold yellow]Interactive Custom Offering Configurator:[/bold yellow]")
+        console.print("  [bold green][1][/bold green] Confirm & Run")
+        console.print("  [bold green][2][/bold green] Edit Weights")
+        console.print("  [bold green][3][/bold green] Add/Edit Signal Questions")
+        console.print("  [bold red][0][/bold red] Cancel")
+
+        step = Prompt.ask("Select action", choices=["0", "1", "2", "3"], default="1")
+
+        if step == "0":
+            console.print("[yellow]Custom offering compilation cancelled.[/yellow]")
+            return
+        elif step == "1":
+            console.print("\n[bold green]Configuration confirmed! Launching autonomous customer prospecting...[/bold green]")
+            profile = offering_dict_to_profile(compiled)
+            prospect_and_render(profile)
+            break
+        elif step == "2":
+            num_rules = len(compiled.get("signal_rules", []))
+            if num_rules == 0:
+                console.print("[red]No signal rules to edit.[/red]")
+                continue
+            rule_num = Prompt.ask(
+                f"Enter rule # to update weight (1-{num_rules})",
+                choices=[str(i) for i in range(1, num_rules + 1)]
+            )
+            idx = int(rule_num) - 1
+            curr_weight = compiled["signal_rules"][idx].get("weight", "MEDIUM")
+            new_weight = Prompt.ask(
+                f"Select new weight for Rule #{rule_num} (current: {curr_weight})",
+                choices=["HIGH", "MEDIUM", "LOW", "DISQUALIFY"],
+                default=curr_weight
+            )
+            compiled["signal_rules"][idx]["weight"] = new_weight
+            console.print(f"[bold green]Rule #{rule_num} weight updated to {new_weight}.[/bold green]")
+        elif step == "3":
+            num_rules = len(compiled.get("signal_rules", []))
+            edit_action = Prompt.ask(
+                "Choose question operation: [1] Edit existing question | [2] Add new question",
+                choices=["1", "2"],
+                default="1"
+            ) if num_rules > 0 else "2"
+
+            if edit_action == "1" and num_rules > 0:
+                rule_choice = Prompt.ask(
+                    f"Enter rule # to edit (1-{num_rules})",
+                    choices=[str(i) for i in range(1, num_rules + 1)]
+                )
+                idx = int(rule_choice) - 1
+                curr_q = compiled["signal_rules"][idx].get("question", "")
+                curr_notes = compiled["signal_rules"][idx].get("guidance_notes", "")
+                new_q = Prompt.ask("Enter updated signal question", default=curr_q)
+                new_notes = Prompt.ask("Enter updated guidance notes", default=curr_notes)
+                compiled["signal_rules"][idx]["question"] = new_q
+                compiled["signal_rules"][idx]["guidance_notes"] = new_notes
+                console.print(f"[bold green]Rule #{rule_choice} updated.[/bold green]")
+            else:
+                new_q = Prompt.ask("Enter new signal question")
+                new_notes = Prompt.ask("Enter guidance notes for evidence extraction", default="")
+                new_weight = Prompt.ask("Select rule weight", choices=["HIGH", "MEDIUM", "LOW", "DISQUALIFY"], default="HIGH")
+                is_neg_str = Prompt.ask("Is this a negative signal (penalizes score)?", choices=["y", "n"], default="n")
+                compiled["signal_rules"].append({
+                    "question": new_q,
+                    "guidance_notes": new_notes,
+                    "weight": new_weight,
+                    "is_negative": (is_neg_str.lower() == "y"),
+                })
+                console.print("[bold green]New signal question added successfully.[/bold green]")
+
+
 def interactive_menu():
     while True:
         console.print("\n" + "=" * 75)
@@ -544,13 +672,14 @@ def interactive_menu():
         console.print("  [bold green][1][/bold green] Find Perfect Customers for an Offering (e.g. Bikes, Automation, Cyber, Custom)")
         console.print("  [bold green][2][/bold green] Deep-Dive Single Enterprise Fit for an Offering (e.g. Test DHL, Siemens, Zalando for Bikes)")
         console.print("  [bold green][3][/bold green] Explore Commercial Offerings & Intelligent Operational Wedges")
-        console.print("  [bold green][4][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
-        console.print("  [bold green][5][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
-        console.print("  [bold green][6][/bold green] Run HT-GNN Graph Intelligence & Ecosystem Ripple Analysis")
-        console.print("  [bold green][7][/bold green] 3-Layer Hybrid Brain (Gemini LLM + Annex Formula + PyG HT-GNN)")
+        console.print("  [bold green][4][/bold green] Custom Commercial Offering (Interactive Rule Configurator & Prospecting)")
+        console.print("  [bold green][5][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
+        console.print("  [bold green][6][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
+        console.print("  [bold green][7][/bold green] Run HT-GNN Graph Intelligence & Ecosystem Ripple Analysis")
+        console.print("  [bold green][8][/bold green] 3-Layer Hybrid Brain (Gemini LLM + Annex Formula + PyG HT-GNN)")
         console.print("  [bold red][0][/bold red] Exit")
 
-        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7"], default="1")
+        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"], default="1")
 
         if choice == "0":
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
@@ -570,8 +699,7 @@ def interactive_menu():
             elif off_choice == "3":
                 prospect_and_render("managed_soc")
             elif off_choice == "4":
-                custom_off = Prompt.ask("Enter what you want to sell (e.g. 'Warehouse Robotics', 'Commercial Solar Panels', 'Electric Delivery Vans')")
-                prospect_and_render(custom_off)
+                run_custom_offering_workflow()
 
         elif choice == "2":
             comp_name = Prompt.ask("Enter company name to evaluate (e.g. DHL Group, BASF, Siemens, Zalando)")
@@ -599,13 +727,15 @@ def interactive_menu():
         elif choice == "3":
             display_offerings_catalog()
         elif choice == "4":
-            test_individual_connectors()
+            run_custom_offering_workflow()
         elif choice == "5":
-            export_last_result()
+            test_individual_connectors()
         elif choice == "6":
+            export_last_result()
+        elif choice == "7":
             comp_name = Prompt.ask("Enter company name for HT-GNN Graph Analysis", default="Knorr-Bremse")
             render_gnn_prediction(comp_name)
-        elif choice == "7":
+        elif choice == "8":
             comp_name = Prompt.ask("Enter company name for 3-Layer Hybrid Brain Analysis", default="DHL Group")
             render_3layer_hybrid_scoring(comp_name)
 
@@ -637,6 +767,10 @@ def main():
     layer3_parser = subparsers.add_parser("3layer", help="Run 3-Layer Hybrid Brain (Gemini + Annex 4.2 + PyG HT-GNN)")
     layer3_parser.add_argument("--company", required=False, default="DHL Group", help="Company name (e.g. DHL Group, BASF, Siemens)")
 
+    # Command: custom
+    custom_parser = subparsers.add_parser("custom", help="Compile and edit a custom commercial offering interactively")
+    custom_parser.add_argument("--offering", required=False, default=None, help="Initial product or service description")
+
     args = parser.parse_args()
 
     if args.command is None or args.command == "menu":
@@ -651,6 +785,8 @@ def main():
         render_gnn_prediction(args.company)
     elif args.command == "3layer":
         render_3layer_hybrid_scoring(args.company)
+    elif args.command == "custom":
+        run_custom_offering_workflow(args.offering)
 
 if __name__ == "__main__":
     main()
