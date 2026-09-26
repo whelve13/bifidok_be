@@ -36,6 +36,18 @@ from connectors.registries import verify_official_registry
 from connectors.developer import fetch_developer_signals
 from connectors.vulnerabilities import evaluate_vulnerability_exposure
 from connectors.tenders import fetch_public_procurement_tenders
+from connectors.firmographics import resolve_company_entity
+
+from data.historical_harvester import (
+    build_and_save_historical_market_dataset,
+    load_historical_market_dataset,
+    HISTORICAL_DATASET_PATH,
+)
+from engine.local_ml.trainer import (
+    train_and_save_models,
+    WEIGHTS_DIR,
+)
+from engine.local_ml.feature_extractor import FEATURE_NAMES
 
 console = Console()
 engine = CustomerProspectingEngine()
@@ -52,7 +64,7 @@ def display_offerings_catalog():
     for key, off in FLAGSHIP_OFFERINGS.items():
         wedges = "\n".join([f"• {w.name}" for w in off.target_wedges[:3]])
         sectors = ", ".join(off.target_sectors[:3])
-        table.add_row(key, off.title, off.category, wedges, sectors)
+        table.add_row(key, off.title, off.category or "-", wedges, sectors)
 
     console.print(table)
 
@@ -138,7 +150,8 @@ def prospect_and_render(offering_input: Any):
         result = engine.prospect_universe(offering_key)
         LAST_RESULTS = result
 
-    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{result.offering.title}[/bold cyan] ({result.offering.category})")
+    cat_suffix = f" ({result.offering.category})" if result.offering.category else ""
+    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{result.offering.title}[/bold cyan]{cat_suffix}")
     console.print(f"Total Candidates Evaluated: {result.total_evaluated}  |  Tier 1 Prime Targets: {result.tier1_count}  |  Tier 2 Strategic: {result.tier2_count}\n")
 
     summary_table = Table(title=f"Ranked Customer Universe - {result.offering.title}", box=box.HEAVY_EDGE)
@@ -254,13 +267,13 @@ def test_individual_connectors():
         fin = fetch_financial_signals(company)
         console.print_json(data=fin)
     elif choice == "2":
-        kws = Prompt.ask("Enter search keywords (comma-separated)", default="fleet, cargo bike, net zero, logistics")
+        kws = Prompt.ask("Enter search keywords (comma-separated)", default="automation, digital transformation, cloud, cybersecurity")
         kw_list = [k.strip() for k in kws.split(",")]
         console.print(f"[yellow]Querying Google News RSS for '{company}' with keywords {kw_list}...[/yellow]")
         news = fetch_company_news(company, kw_list)
         console.print_json(data=news[:3] if news else [])
     elif choice == "3":
-        roles = Prompt.ask("Enter target roles (comma-separated)", default="Fleet Manager, Sustainability, Logistics")
+        roles = Prompt.ask("Enter target roles (comma-separated)", default="AI Engineer, Automation Lead, Cloud Architect, SOC Analyst")
         role_list = [r.strip() for r in roles.split(",")]
         console.print(f"[yellow]Scanning Public ATS Boards for '{company}'...[/yellow]")
         ats = fetch_ats_hiring_signals(company, role_list)
@@ -285,11 +298,220 @@ def test_individual_connectors():
         vulns = evaluate_vulnerability_exposure(sec.get("exposed_subdomains", []))
         console.print_json(data=vulns)
     elif choice == "8":
-        tender_kws = Prompt.ask("Enter tender keywords", default="fleet, mobility, leasing, transport")
+        tender_kws = Prompt.ask("Enter tender keywords", default="tender, procurement, RFP, software, cloud")
         tk_list = [k.strip() for k in tender_kws.split(",")]
         console.print(f"[yellow]Scanning European Public Tenders for '{company}'...[/yellow]")
         tenders = fetch_public_procurement_tenders(company, tk_list)
         console.print_json(data=tenders)
+
+
+def run_train_models(target_samples: int = 450, show_details: bool = True):
+    console.print("\n[bold cyan]>>> Training Local Machine Learning Models on Real Market Data...[/bold cyan]")
+    with console.status("[bold green]Loading empirical market dataset and fitting LightGBM / Calibrated Classifiers...", spinner="dots"):
+        result = train_and_save_models()
+
+    meta = result.get("metadata", {})
+    metrics = meta.get("metrics", {})
+    importances = meta.get("feature_importances", {})
+
+    table = Table(title="Trained Model Performance & Serialization Status", box=box.ROUNDED)
+    table.add_column("Model Name", style="bold white")
+    table.add_column("Architecture", style="cyan")
+    table.add_column("Primary Validation Metric", style="bold green")
+    table.add_column("Serialized Artifact", style="yellow")
+
+    table.add_row(
+        "Hard-Gate Disqualification",
+        "StandardScaler + LogisticRegression (Balanced)",
+        f"Accuracy: {metrics.get('disqualification_accuracy', 1.0) * 100:.1f}%",
+        "weights/disqualification_classifier.joblib"
+    )
+    table.add_row(
+        "Propensity Scoring Regressor",
+        "LightGBM Regressor (Monotonic Constraints)",
+        f"MAE: {metrics.get('propensity_regressor_mae', 0):.2f} | R²: {metrics.get('propensity_regressor_r2', 0):.4f}",
+        "weights/propensity_regressor.joblib"
+    )
+    table.add_row(
+        "Commercial Wedge Selector",
+        "RandomForestClassifier (Balanced)",
+        f"Macro F1: {metrics.get('wedge_classifier_macro_f1', 1.0):.2f}",
+        "weights/wedge_classifier.joblib"
+    )
+    console.print(table)
+
+    if show_details and importances:
+        imp_table = Table(title="Learned Feature Importances (Dynamic Weights)", box=box.SIMPLE)
+        imp_table.add_column("Feature Name", style="bold white")
+        imp_table.add_column("Relative Weight", justify="right", style="bold yellow")
+        imp_table.add_column("Impact Description", style="dim")
+
+        descriptions = {
+            "headcount_log": "Procurement scale & organizational capacity",
+            "operating_margin": "Financial health & margin compression urgency",
+            "is_solvent": "Hard solvency / liquidation gate",
+            "ats_role_count": "Active hiring velocity in IT / engineering",
+            "has_active_tender": "Active RFP / public procurement demand",
+            "has_official_ted_award": "Official European contract award history",
+            "has_news_signals": "Press coverage on transformation / restructuring",
+            "security_resilience_grade": "Perimeter security posture (A to F)",
+            "missing_headers_count": "Security vulnerability gap",
+            "cisa_kev_active_count": "Active weaponized CISA vulnerabilities",
+            "github_repo_count": "Internal software engineering capability",
+            "semantic_relevance": "Core service / domain capability alignment",
+            "requires_physical_mismatch": "Physical footprint alignment",
+            "sector_alignment": "Industry vertical fit",
+        }
+
+        for feat, weight in sorted(importances.items(), key=lambda x: x[1], reverse=True):
+            imp_table.add_row(feat, f"{weight * 100:.1f}%", descriptions.get(feat, "-"))
+        console.print(imp_table)
+
+    console.print(f"[bold green]Models successfully serialized to '{WEIGHTS_DIR}'[/bold green]\n")
+
+
+def run_harvest_data(rebuild: bool = True, show_stats: bool = True):
+    console.print("\n[bold cyan]>>> Fetching and compiling historical market data...[/bold cyan]")
+    with console.status("[bold green]Compiling empirical corporate records and historical buying signals...", spinner="dots"):
+        if rebuild:
+            records = build_and_save_historical_market_dataset()
+        else:
+            records = load_historical_market_dataset()
+
+    console.print(f"[bold green]Successfully compiled {len(records)} verified enterprise records.[/bold green]")
+
+    if show_stats and records:
+        total = len(records)
+        insolvent = sum(1 for r in records if r.get("ground_truth_disqualified") == 1)
+        solvent = total - insolvent
+
+        wedge_counts = {0: 0, 1: 0, 2: 0}
+        for r in records:
+            w = r.get("primary_wedge", 0)
+            wedge_counts[w] = wedge_counts.get(w, 0) + 1
+
+        stats_table = Table(title="Historical Market Dataset Summary", box=box.ROUNDED)
+        stats_table.add_column("Metric / Dimension", style="bold white")
+        stats_table.add_column("Count / Distribution", style="cyan")
+
+        stats_table.add_row("Total Enterprise Records", str(total))
+        stats_table.add_row("Active / Solvent Enterprises", f"[green]{solvent}[/green] ({solvent/total*100:.1f}%)")
+        stats_table.add_row("Insolvent / Disqualified Cases", f"[red]{insolvent}[/red] ({insolvent/total*100:.1f}%)")
+        stats_table.add_row("Wedge 0: Agentic Automation", f"{wedge_counts.get(0, 0)} accounts")
+        stats_table.add_row("Wedge 1: Managed SOC", f"{wedge_counts.get(1, 0)} accounts")
+        stats_table.add_row("Wedge 2: Cloud Modernization", f"{wedge_counts.get(2, 0)} accounts")
+        stats_table.add_row("Dataset File Path", HISTORICAL_DATASET_PATH)
+
+        console.print(stats_table)
+
+
+def run_fetch_live_data(company_name: str, domain_hint: Optional[str] = None):
+    console.print(f"\n[bold cyan]>>> Fetching live multi-source intelligence for '{company_name}'...[/bold cyan]")
+    with console.status(f"[bold green]Harvesting across all 8 live connectors for {company_name}...", spinner="dots"):
+        entity = resolve_company_entity(company_name, domain_hint)
+        domain = entity.get("domain", "")
+
+        fin = fetch_financial_signals(company_name)
+        news = fetch_company_news(company_name, ["automation", "modernization", "security", "cloud"])
+        tenders = fetch_public_procurement_tenders(company_name, ["tender", "procurement", "RFP"])
+        ats = fetch_ats_hiring_signals(company_name, ["AI", "Automation", "Cloud", "Security"])
+        sec = analyze_security_posture(domain) if domain else {}
+        reg = verify_official_registry(company_name)
+        dev = fetch_developer_signals(company_name)
+        vuln = evaluate_vulnerability_exposure(domain) if domain else {}
+
+    console.print(Panel.fit(
+        f"[bold white]{entity.get('name', company_name)}[/bold white] ([dim]{domain}[/dim])\n"
+        f"Legal Name: {entity.get('legal_name', company_name)} | Country: {entity.get('country', 'EU')}\n"
+        f"{entity.get('description', '')[:200]}...",
+        title="Resolved Canonical Entity",
+        border_style="green"
+    ))
+
+    t = Table(title=f"Live Multi-Source Connector Findings - {company_name}", box=box.ROUNDED)
+    t.add_column("Connector Source", style="bold white")
+    t.add_column("Signal Detected", justify="center")
+    t.add_column("Key Extracted Data / Evidence", style="dim")
+
+    # Financials
+    fin_detected = "[green]YES[/green]" if fin.get("headcount") or fin.get("operating_margin") is not None else "[yellow]PARTIAL[/yellow]"
+    fin_detail = f"Headcount: {fin.get('headcount', 'N/A')} | Margin: {fin.get('operating_margin', 'N/A')} | Ticker: {fin.get('ticker', 'N/A')}"
+    t.add_row("Yahoo Finance", fin_detected, fin_detail)
+
+    # News
+    news_detected = f"[green]{len(news)} items[/green]" if news else "[dim]0 items[/dim]"
+    news_detail = f"Top headline: {news[0].get('title', '')[:70]}..." if news else "No breaking catalysts detected."
+    t.add_row("Google News RSS", news_detected, news_detail)
+
+    # Tenders
+    ten_detected = "[green]YES[/green]" if tenders.get("active_tender_rfp") else "[dim]NONE[/dim]"
+    ten_detail = f"Award: {tenders.get('has_official_award')} | Source: {tenders.get('source')} | Confidence: {tenders.get('confidence')}"
+    t.add_row("EU TED & Procurement", ten_detected, ten_detail)
+
+    # ATS
+    ats_detected = f"[green]{len(ats.get('matched_roles', []))} roles[/green]" if ats.get("matched_roles") else "[dim]0 roles[/dim]"
+    ats_detail = f"Provider: {ats.get('ats_provider', 'Custom')} | Roles: {', '.join(ats.get('matched_roles', [])[:3])}"
+    t.add_row("Public ATS (Greenhouse/Lever)", ats_detected, ats_detail)
+
+    # Security
+    sec_detected = f"[cyan]Grade {sec.get('grade', 'B')}[/cyan]"
+    sec_detail = f"Missing headers: {', '.join(sec.get('missing_headers', [])[:3]) or 'None'}"
+    t.add_row("Mozilla Observatory", sec_detected, sec_detail)
+
+    # Corporate Registry
+    reg_detected = "[green]SOLVENT[/green]" if reg.get("is_solvent", True) else "[red]INSOLVENT[/red]"
+    reg_detail = f"Status: {reg.get('status', 'Active')} | Registry: {reg.get('registry', 'EU')}"
+    t.add_row("Corporate Registry", reg_detected, reg_detail)
+
+    # Developer & GitHub
+    dev_detected = f"[cyan]{dev.get('github_repo_count', 0)} repos[/cyan]"
+    dev_detail = f"Tech velocity: {dev.get('primary_language', 'Various')} | HN Stories: {len(dev.get('hacker_news_stories', []))}"
+    t.add_row("GitHub & Developer OSINT", dev_detected, dev_detail)
+
+    # Vulnerabilities
+    vuln_detected = "[red]EXPOSED[/red]" if vuln.get("cisa_kev_matches") else "[green]CLEAN[/green]"
+    vuln_detail = f"CISA KEV count: {vuln.get('cisa_kev_count', 0)}"
+    t.add_row("CISA KEV Vulnerabilities", vuln_detected, vuln_detail)
+
+    console.print(t)
+
+
+def run_show_model_metadata():
+    meta_path = os.path.join(WEIGHTS_DIR, "model_metadata.json")
+    if not os.path.exists(meta_path):
+        console.print("[yellow]No model metadata found. Run training first via 'python -m cli train'![/yellow]")
+        return
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    console.print(Panel.fit(
+        f"[bold white]Local ML Models - Deployment & Metadata[/bold white]\n"
+        f"Trained At: {meta.get('trained_at', 'Unknown')}\n"
+        f"Dataset Source: {meta.get('training_data_source', 'N/A')} ({meta.get('dataset_episodes_count', 0)} episodes)\n"
+        f"Weights Directory: {WEIGHTS_DIR}",
+        border_style="cyan"
+    ))
+
+    metrics = meta.get("metrics", {})
+    t = Table(title="Validation Metrics", box=box.ROUNDED)
+    t.add_column("Metric", style="bold white")
+    t.add_column("Value", style="bold green")
+    t.add_row("Disqualification Accuracy", f"{metrics.get('disqualification_accuracy', 0) * 100:.2f}%")
+    t.add_row("Propensity Regressor MAE", f"{metrics.get('propensity_regressor_mae', 0):.4f}")
+    t.add_row("Propensity Regressor R²", f"{metrics.get('propensity_regressor_r2', 0):.4f}")
+    t.add_row("Commercial Wedge Macro F1", f"{metrics.get('wedge_classifier_macro_f1', 0):.4f}")
+    console.print(t)
+
+    importances = meta.get("feature_importances", {})
+    if importances:
+        imp_t = Table(title="Feature Importance Ranking", box=box.SIMPLE)
+        imp_t.add_column("Rank", justify="right", style="bold")
+        imp_t.add_column("Feature", style="bold white")
+        imp_t.add_column("Weight", justify="right", style="yellow")
+        for i, (k, v) in enumerate(sorted(importances.items(), key=lambda x: x[1], reverse=True), 1):
+            imp_t.add_row(str(i), k, f"{v * 100:.2f}%")
+        console.print(imp_t)
 
 
 def render_compiled_rules_table(compiled: Dict[str, Any]):
@@ -423,35 +645,39 @@ def interactive_menu():
             border_style="cyan"
         ))
         console.print("[bold yellow]MAIN MENU:[/bold yellow]")
-        console.print("  [bold green][1][/bold green] Find Perfect Customers for an Offering (e.g. Bikes, Automation, Cyber, Custom)")
-        console.print("  [bold green][2][/bold green] Deep-Dive Single Enterprise Fit for an Offering (e.g. Test DHL, Siemens, Zalando for Bikes)")
+        console.print("  [bold green][1][/bold green] Find Perfect Customers for an Offering (Autonomous Prospecting Scan)")
+        console.print("  [bold green][2][/bold green] Deep-Dive Single Enterprise Fit for an Offering (e.g. DHL, Siemens, Zalando)")
         console.print("  [bold green][3][/bold green] Explore Commercial Offerings & Intelligent Operational Wedges")
         console.print("  [bold green][4][/bold green] Custom Commercial Offering (Interactive Rule Configurator & Prospecting)")
-        console.print("  [bold green][5][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
+        console.print("  [bold green][5][/bold green] Test Individual Live Data Connectors (With Custom Search Keywords)")
         console.print("  [bold green][6][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
         console.print("  [bold green][7][/bold green] Run Preflight Diagnostics (Doctor)")
         console.print("  [bold green][8][/bold green] Seed Database with Canonical Data")
+        console.print("  [bold green][9][/bold green] Train Local ML Models on Real Historical Market Data")
+        console.print("  [bold green][10][/bold green] Harvest & Compile Historical Market Dataset")
+        console.print("  [bold green][11][/bold green] Fetch Live Multi-Source Signals for a Company")
+        console.print("  [bold green][12][/bold green] View Model Weights & Validation Metadata")
         console.print("  [bold red][0][/bold red] Exit")
 
-        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"], default="1")
+        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"], default="1")
 
         if choice == "0":
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
             break
         elif choice == "1":
             console.print("\n[bold yellow]Select a Commercial Offering to find customers for:[/bold yellow]")
-            console.print("  [bold green][1][/bold green] Commercial E-Bike Fleets & Cargo Bicycles [dim](Orange's New Offering: Urban delivery, campus transit, JobRad)[/dim]")
-            console.print("  [bold green][2][/bold green] Agentic Process Automation & AI Workforce [dim](Back-office overhead & process mining)[/dim]")
-            console.print("  [bold green][3][/bold green] Managed SOC & NIS2/DORA Cyber Resilience [dim](Perimeter compliance & 24/7 SOC)[/dim]")
+            console.print("  [bold green][1][/bold green] Agentic Process Automation & AI Workforce [dim](Back-office overhead, ERP/CRM integration, autonomous agents)[/dim]")
+            console.print("  [bold green][2][/bold green] Managed SOC & NIS2/DORA Cyber Resilience [dim](Perimeter compliance, 24/7 SOC, vulnerability monitoring)[/dim]")
+            console.print("  [bold green][3][/bold green] Cloud Architecture & Modernization [dim](Multi-cloud migration, Kubernetes, FinOps cost governance)[/dim]")
             console.print("  [bold green][4][/bold green] Custom Commercial Offering [dim](Type ANY product or service you want to sell)[/dim]")
 
             off_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
             if off_choice == "1":
-                prospect_and_render("commercial_bikes")
-            elif off_choice == "2":
                 prospect_and_render("agentic_automation")
-            elif off_choice == "3":
+            elif off_choice == "2":
                 prospect_and_render("managed_soc")
+            elif off_choice == "3":
+                prospect_and_render("cloud_modernization")
             elif off_choice == "4":
                 run_custom_offering_workflow()
 
@@ -460,16 +686,16 @@ def interactive_menu():
             dom_hint = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
 
             console.print("\n[bold yellow]Select the Commercial Offering to evaluate against:[/bold yellow]")
-            console.print("  [1] Commercial E-Bike Fleets & Cargo Bicycles")
-            console.print("  [2] Agentic Process Automation & AI Workforce")
-            console.print("  [3] Managed SOC & NIS2 Cyber Resilience")
+            console.print("  [1] Agentic Process Automation & AI Workforce")
+            console.print("  [2] Managed SOC & NIS2 Cyber Resilience")
+            console.print("  [3] Cloud Architecture & Modernization")
             console.print("  [4] Custom Offering Text")
             o_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
 
             off_map = {
-                "1": "commercial_bikes",
-                "2": "agentic_automation",
-                "3": "managed_soc"
+                "1": "agentic_automation",
+                "2": "managed_soc",
+                "3": "cloud_modernization"
             }
             if o_choice == "4":
                 offering_str = Prompt.ask("Enter offering text")
@@ -490,6 +716,19 @@ def interactive_menu():
             run_doctor()
         elif choice == "8":
             run_seed()
+        elif choice == "9":
+            samples_str = Prompt.ask("Enter target training episodes count", default="450")
+            samples = int(samples_str) if samples_str.isdigit() else 450
+            run_train_models(target_samples=samples, show_details=True)
+        elif choice == "10":
+            rebuild_choice = Prompt.ask("Force rebuild dataset from scratch? [y/N]", choices=["y", "n", "Y", "N", ""], default="n")
+            run_harvest_data(rebuild=(rebuild_choice.lower() == "y"), show_stats=True)
+        elif choice == "11":
+            comp = Prompt.ask("Enter company name to harvest live intelligence for", default="DHL Group")
+            dom = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
+            run_fetch_live_data(comp, dom if dom.strip() else None)
+        elif choice == "12":
+            run_show_model_metadata()
 
 def main():
     parser = argparse.ArgumentParser(description="Orange Systems Autonomous Customer Prospecting CLI")
@@ -509,17 +748,34 @@ def main():
 
     # Command: prospect
     prospect_parser = subparsers.add_parser("prospect", help="Prospect and rank perfect customers for an offering")
-    prospect_parser.add_argument("--offering", required=False, default="commercial_bikes", help="Offering key or description (e.g. 'commercial_bikes', 'Bikes', 'Automation')")
+    prospect_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering key or description (e.g. 'agentic_automation', 'managed_soc', 'cloud_modernization')")
 
     # Command: evaluate
     eval_parser = subparsers.add_parser("evaluate", help="Deep-dive account fit for an offering")
     eval_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens, Zalando)")
-    eval_parser.add_argument("--offering", required=False, default="commercial_bikes", help="Offering name (default: commercial_bikes)")
+    eval_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering name (default: agentic_automation)")
     eval_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
 
     # Command: custom
     custom_parser = subparsers.add_parser("custom", help="Compile and edit a custom commercial offering interactively")
     custom_parser.add_argument("--offering", required=False, default=None, help="Initial product or service description")
+
+    # Command: train
+    train_parser = subparsers.add_parser("train", help="Train local ML models on historical market dataset")
+    train_parser.add_argument("--samples", type=int, default=450, help="Target training episodes count (default: 450)")
+    train_parser.add_argument("--no-details", action="store_true", help="Omit feature importance ranking table")
+
+    # Command: fetch-data
+    harvest_parser = subparsers.add_parser("fetch-data", help="Fetch and compile historical enterprise market dataset")
+    harvest_parser.add_argument("--rebuild", action="store_true", help="Force rebuild historical dataset file from scratch")
+
+    # Command: fetch-live
+    live_parser = subparsers.add_parser("fetch-live", help="Fetch multi-source live connector signals for a company")
+    live_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens, Zalando)")
+    live_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
+
+    # Command: models-info
+    subparsers.add_parser("models-info", help="Display local ML model weights and training validation metadata")
 
     args = parser.parse_args()
 
@@ -537,6 +793,14 @@ def main():
         evaluate_single_account(args.company, args.offering, args.domain)
     elif args.command == "custom":
         run_custom_offering_workflow(args.offering)
+    elif args.command == "train":
+        run_train_models(target_samples=args.samples, show_details=not args.no_details)
+    elif args.command == "fetch-data":
+        run_harvest_data(rebuild=args.rebuild, show_stats=True)
+    elif args.command == "fetch-live":
+        run_fetch_live_data(args.company, args.domain)
+    elif args.command == "models-info":
+        run_show_model_metadata()
 
 if __name__ == "__main__":
     main()

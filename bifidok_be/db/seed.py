@@ -80,10 +80,10 @@ def seed_database(session: Optional[Session] = None) -> Dict[str, int]:
                 ),
             },
             {
-                "name": "Commercial Bikes",
+                "name": "Cloud Architecture & Modernization",
                 "description": (
-                    "Turnkey corporate e-bike fleets, heavy-duty cargo e-bikes for urban "
-                    "delivery, and employee commuter bike leasing programs."
+                    "Enterprise cloud migration, legacy application modernization, "
+                    "Kubernetes orchestration, and multi-cloud cost governance."
                 ),
             },
         ]
@@ -156,30 +156,30 @@ def seed_database(session: Optional[Session] = None) -> Dict[str, int]:
                 "weight": SignalWeightType.DISQUALIFY,
                 "is_negative": True,
             },
-            # Commercial Bikes Rules
+            # Cloud Architecture & Modernization Rules
             {
-                "offering_name": "Commercial Bikes",
-                "question": "Does the company operate urban courier, parcel, or last-mile delivery fleets?",
-                "guidance_notes": "Look for courier dispatch, delivery vans, urban logistics hubs.",
+                "offering_name": "Cloud Architecture & Modernization",
+                "question": "Is the enterprise actively modernizing monolithic architectures or migrating to multi-cloud?",
+                "guidance_notes": "Look for AWS/Azure/GCP tender RFPs, legacy mainframe decommission, and microservices initiatives.",
                 "weight": SignalWeightType.HIGH,
                 "is_negative": False,
             },
             {
-                "offering_name": "Commercial Bikes",
-                "question": "Does the enterprise operate massive multi-building campuses or industrial manufacturing complexes?",
-                "guidance_notes": "Look for chemical plants, automotive factories, aerospace campuses spanning square kilometers.",
+                "offering_name": "Cloud Architecture & Modernization",
+                "question": "Is the organization hiring cloud architects, DevOps leads, or platform engineers?",
+                "guidance_notes": "Look for recruitment in Kubernetes, Terraform, cloud security, and site reliability engineering.",
                 "weight": SignalWeightType.MEDIUM,
                 "is_negative": False,
             },
             {
-                "offering_name": "Commercial Bikes",
-                "question": "Does the company operate 100% remotely with no physical offices or hubs?",
-                "guidance_notes": "All-remote workforce cannot utilize physical bikes or depot mobility.",
+                "offering_name": "Cloud Architecture & Modernization",
+                "question": "Does the enterprise have rigid sovereign on-premise mandates blocking public cloud adoption?",
+                "guidance_notes": "Strict government or defense data localization preventing public cloud migration.",
                 "weight": SignalWeightType.LOW,
                 "is_negative": True,
             },
             {
-                "offering_name": "Commercial Bikes",
+                "offering_name": "Cloud Architecture & Modernization",
                 "question": "Is the enterprise currently under liquidation or bankruptcy proceedings?",
                 "guidance_notes": "Financial insolvency disqualifies vendor onboarding.",
                 "weight": SignalWeightType.DISQUALIFY,

@@ -31,7 +31,7 @@ class DecisionMakerPersona(BaseModel):
 class OfferingProfile(BaseModel):
     offering_id: str
     title: str
-    category: str
+    category: Optional[str] = None
     description: str
     target_sectors: List[str] = Field(default_factory=list)
     target_wedges: List[CommercialWedge] = Field(default_factory=list)

@@ -1,6 +1,7 @@
 import logging
+import re
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import yfinance as yf
 from services.cache import get_cache, set_cache
 
@@ -29,45 +30,79 @@ def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
     search_cache_key = f"cache:yahoo_search:{company_name.strip().lower()}"
     cached_search = get_cache(search_cache_key)
 
-    quotes = []
-    if cached_search is not None:
-        quotes = cached_search.get("quotes", []) if isinstance(cached_search, dict) else []
+    quotes: List[Dict[str, Any]] = []
+    if cached_search is not None and isinstance(cached_search, dict):
+        quotes = cached_search.get("quotes", [])
     else:
-        try:
-            search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}&quotesCount=1"
-            resp = requests.get(search_url, headers=HEADERS, timeout=5)
-            if resp.status_code == 200:
-                search_data = resp.json()
-                set_cache(search_cache_key, search_data, ttl=86400)
-                quotes = search_data.get("quotes", [])
-        except Exception as exc:
-            logger.debug("Yahoo Finance search failed for %s: %s", company_name, exc)
+        # Search queries to try: original name, and name with corporate legal suffixes stripped
+        slug_base = re.sub(
+            r'\b(ag|se|gmbh|sa|holding|group|corp|inc|co|plc|nv|bv)\b',
+            '',
+            company_name,
+            flags=re.IGNORECASE,
+        ).strip()
+        queries_to_try = [company_name]
+        if slug_base and slug_base.lower() != company_name.lower():
+            queries_to_try.append(slug_base)
 
-    if quotes:
-        results["ticker"] = quotes[0].get("symbol")
+        for q in queries_to_try:
+            try:
+                search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={requests.utils.quote(q)}&quotesCount=5"
+                resp = requests.get(search_url, headers=HEADERS, timeout=5)
+                if resp.status_code == 200:
+                    search_data = resp.json()
+                    curr_quotes = search_data.get("quotes", [])
+                    if curr_quotes:
+                        quotes.extend(curr_quotes)
+                        set_cache(search_cache_key, search_data, ttl=86400)
+                        break
+            except Exception as exc:
+                logger.debug("Yahoo Finance search failed for %s: %s", q, exc)
 
-    if not results["ticker"]:
-        # Fallback heuristic if ticker search didn't return
+    # Prioritize equity quotes
+    candidate_symbols = []
+    for q in quotes:
+        sym = q.get("symbol")
+        qtype = str(q.get("quoteType", "")).upper()
+        if sym:
+            if qtype == "EQUITY":
+                candidate_symbols.insert(0, sym)
+            else:
+                candidate_symbols.append(sym)
+
+    if not candidate_symbols:
         results["evidence"].append("Public financial ticker not resolved.")
         return results
 
     # Step 2: Fetch Financial Ratios & Headcount (Row 7)
-    ticker_str = str(results["ticker"]).strip().upper()
-    info_cache_key = f"cache:yahoo_info:{ticker_str}"
-    cached_info = get_cache(info_cache_key)
-
     info = {}
-    if cached_info is not None and isinstance(cached_info, dict):
-        info = cached_info
-    else:
-        try:
-            ticker_obj = yf.Ticker(results["ticker"])
-            raw_info = ticker_obj.info or {}
-            if raw_info:
-                info = raw_info
-                set_cache(info_cache_key, info, ttl=86400)
-        except Exception as e:
-            results["evidence"].append(f"Financial summary partially retrieved: {str(e)}")
+    chosen_symbol = candidate_symbols[0]
+
+    for sym in candidate_symbols[:3]:
+        ticker_str = str(sym).strip().upper()
+        info_cache_key = f"cache:yahoo_info:{ticker_str}"
+        cached_info = get_cache(info_cache_key)
+
+        if cached_info is not None and isinstance(cached_info, dict):
+            curr_info = cached_info
+        else:
+            try:
+                ticker_obj = yf.Ticker(sym)
+                curr_info = ticker_obj.info or {}
+                if curr_info:
+                    set_cache(info_cache_key, curr_info, ttl=86400)
+            except Exception as e:
+                curr_info = {}
+
+        if curr_info.get("fullTimeEmployees") or curr_info.get("operatingMargins") is not None:
+            info = curr_info
+            chosen_symbol = sym
+            break
+        elif not info and curr_info:
+            info = curr_info
+            chosen_symbol = sym
+
+    results["ticker"] = chosen_symbol
 
     headcount = info.get("fullTimeEmployees")
     sector = info.get("sector") or info.get("industry")

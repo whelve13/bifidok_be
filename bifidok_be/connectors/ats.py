@@ -21,7 +21,8 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
         "ats_provider": None,
         "total_openings": 0,
         "matched_roles": [],
-        "evidence": []
+        "evidence": [],
+        "is_remote_first": False,
     }
 
     lowered_kws = [k.lower() for k in keywords]
@@ -35,6 +36,12 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
             jobs = data.get("jobs", [])
             results["ats_provider"] = "Greenhouse"
             results["total_openings"] = len(jobs)
+            if len(jobs) >= 5:
+                remote_count = sum(
+                    1 for j in jobs if "remote" in (j.get("location", {}).get("name") or "").lower()
+                )
+                if (remote_count / len(jobs)) >= 0.70:
+                    results["is_remote_first"] = True
             for j in jobs:
                 title = j.get("title", "")
                 if any(kw in title.lower() for kw in lowered_kws):
@@ -56,6 +63,15 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
             if isinstance(jobs, list):
                 results["ats_provider"] = "Lever"
                 results["total_openings"] = len(jobs)
+                if len(jobs) >= 5:
+                    remote_count = sum(
+                        1
+                        for j in jobs
+                        if "remote" in str(j.get("categories", {}).get("location", "")).lower()
+                        or "remote" in j.get("text", "").lower()
+                    )
+                    if (remote_count / len(jobs)) >= 0.70:
+                        results["is_remote_first"] = True
                 for j in jobs:
                     title = j.get("text", "")
                     if any(kw in title.lower() for kw in lowered_kws):
