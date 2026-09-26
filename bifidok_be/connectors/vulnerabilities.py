@@ -14,9 +14,11 @@ def get_cisa_vulnerabilities() -> List[Dict[str, Any]]:
         if resp.status_code == 200:
             _CISA_CACHE = resp.json().get("vulnerabilities", [])
             return _CISA_CACHE
+        else:
+            _CISA_CACHE = []
     except Exception:
-        pass
-    return []
+        _CISA_CACHE = []
+    return _CISA_CACHE
 
 def evaluate_vulnerability_exposure(discovered_subdomains: List[str], tech_stack: List[str] = None) -> Dict[str, Any]:
     """

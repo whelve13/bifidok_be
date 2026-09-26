@@ -62,9 +62,10 @@ class HTGNNInferenceEngine:
                 break
 
         if matched_id is None:
-            # Fallback to Knorr-Bremse or first index if unknown
+            # Map unknown account to an enterprise archetype node for graph embedding baseline,
+            # but preserve the actual target company name in attribution and outreach.
             matched_id = company_to_id.get("Knorr-Bremse", 1)
-            matched_name = "Knorr-Bremse"
+            matched_name = company_name.strip()
 
         self.model.eval()
         with torch.no_grad():

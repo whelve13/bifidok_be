@@ -23,48 +23,48 @@ DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 FALLBACK_MODEL = "gemini-1.5-flash"
 
 
-def verify_verbatim_quote(evidence_quote: Optional[str], raw_passage: Optional[str]) -> bool:
-    """
-    Programmatic anti-hallucination guardrail (Annex Section 4.1).
-    Asserts that the extracted evidence quote exists verbatim in the source passage.
-    
-    Handles stripped surrounding quotes, whitespace normalization,
-    and exact substring matching.
-    """
-    if not evidence_quote or not raw_passage:
-        return False
-    
-    quote = evidence_quote.strip()
-    if not quote:
-        return False
-
-    # 1. Exact substring match
-    if quote in raw_passage:
-        return True
-
-    # 2. Stripped outer quotation marks (common LLM artifact)
-    clean_quote = quote.strip('"\'“”`')
-    if clean_quote and clean_quote in raw_passage:
-        return True
-
-    # 3. Normalized whitespace match (collapses tabs, multiple spaces, line-breaks)
-    norm_quote = " ".join(clean_quote.split())
-    norm_passage = " ".join(raw_passage.split())
-    if norm_quote and norm_quote in norm_passage:
-        return True
-
-    return False
+try:
+    from engine.anti_hallucination import verify_verbatim_quote
+except ImportError:
+    try:
+        from bifidok_be.engine.anti_hallucination import verify_verbatim_quote
+    except ImportError:
+        from anti_hallucination import verify_verbatim_quote
 
 
 def get_genai_client(api_key: Optional[str] = None) -> Optional[Any]:
     """
     Initializes and returns a Google GenAI Client if a valid GEMINI_API_KEY is present.
     Returns None if the key is missing, empty, or placeholder.
+    Falls back to parent directory .env if local key is a placeholder.
     """
     key = api_key or os.getenv("GEMINI_API_KEY", "")
     key = key.strip()
     
     # Check for empty or template placeholder keys
+    if not key or key.lower() in ("your_gemini_api_key_here", "none", ""):
+        # Check parent directory .env fallback
+        cur_file = os.path.abspath(__file__)
+        parent_dirs = [
+            os.path.dirname(os.path.dirname(os.path.dirname(cur_file))),
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(cur_file))))
+        ]
+        for p_dir in parent_dirs:
+            p_env = os.path.join(p_dir, ".env")
+            if os.path.exists(p_env):
+                try:
+                    with open(p_env, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if line.strip().startswith("GEMINI_API_KEY="):
+                                cand_k = line.strip().split("=", 1)[1].strip().strip("'\"")
+                                if cand_k and cand_k.lower() not in ("your_gemini_api_key_here", "none", ""):
+                                    key = cand_k
+                                    break
+                except Exception:
+                    pass
+            if key and key.lower() not in ("your_gemini_api_key_here", "none", ""):
+                break
+
     if not key or key.lower() in ("your_gemini_api_key_here", "none", ""):
         return None
 
@@ -129,6 +129,15 @@ def _heuristic_extract_signal_evidence(
         curr_matches = [kw for kw in query_keywords if kw in s_lower]
         score = len(curr_matches)
         
+        # Check for explicit negation markers to avoid false positives (e.g. 'no plans for automation')
+        negation_markers = [
+            " no ", " not ", " none ", " never ", " halted ", " stopped ",
+            " denied ", " cancelled ", " canceled ", " without ", " rejected ",
+            " no plans", " not planning", " denies ", " refuted "
+        ]
+        padded = f" {s_lower} "
+        has_explicit_negation = any(neg in padded for neg in negation_markers)
+
         # High-impact domain signals bonus
         domain_anchors = [
             "nis2", "dora", "automation", "rpa", "ai", "soc", "procurement",
@@ -138,6 +147,9 @@ def _heuristic_extract_signal_evidence(
         for anchor in domain_anchors:
             if anchor in query_keywords and anchor in s_lower:
                 score += 2
+
+        if has_explicit_negation:
+            score = 0
 
         if score > best_score:
             best_score = score

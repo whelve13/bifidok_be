@@ -1,3 +1,4 @@
+import re
 import requests
 from typing import Dict, Any, Optional
 
@@ -36,7 +37,8 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
 
     if not resolved["domain"]:
         # Fallback to simple sanitized domain if still empty
-        clean_name = company_name.lower().replace(" ", "").replace("-", "").replace("ag", "").replace("se", "")
+        slug_base = re.sub(r'\b(ag|se|gmbh|sa|holding|group|corp|inc|co|plc|nv|bv)\b', '', company_name, flags=re.IGNORECASE)
+        clean_name = re.sub(r'[^a-zA-Z0-9]', '', slug_base).lower()
         resolved["domain"] = f"{clean_name}.com"
 
     # 2. Wikipedia Summary API (Row 45 of XLSX)
