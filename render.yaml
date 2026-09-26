@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: bifidok-sales-intelligence-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: STRICT_PRODUCTION
+        value: "true"
+      - key: ENVIRONMENT
+        value: "production"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: RESIDENTIAL_PROXY_URL
+        sync: false

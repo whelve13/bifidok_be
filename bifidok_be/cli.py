@@ -14,7 +14,6 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
-from engine.prospecting_engine import CustomerProspectingEngine
 from engine.offering_catalog import (
     FLAGSHIP_OFFERINGS,
     OfferingProfile,
@@ -38,7 +37,17 @@ from connectors.vulnerabilities import evaluate_vulnerability_exposure
 from connectors.tenders import fetch_public_procurement_tenders
 
 console = Console()
-engine = CustomerProspectingEngine()
+_prospecting_engine = None
+
+
+def get_prospecting_engine():
+    global _prospecting_engine
+    if _prospecting_engine is None:
+        from engine.prospecting_engine import CustomerProspectingEngine
+        _prospecting_engine = CustomerProspectingEngine()
+    return _prospecting_engine
+
+
 LAST_RESULTS: Any = None
 
 def display_offerings_catalog():
@@ -135,7 +144,7 @@ def prospect_and_render(offering_input: Any):
     console.print(f"\n[bold green]>>> Prospecting customer universe for offering: '{offering_key}'...[/bold green]")
     global LAST_RESULTS
     with console.status("[bold cyan]Scanning enterprise candidates, harvesting live connectors, computing multidimensional ML fit...", spinner="dots"):
-        result = engine.prospect_universe(offering_key)
+        result = get_prospecting_engine().prospect_universe(offering_key)
         LAST_RESULTS = result
 
     console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{result.offering.title}[/bold cyan] ({result.offering.category})")
@@ -174,7 +183,7 @@ def prospect_and_render(offering_input: Any):
 def evaluate_single_account(company_name: str, offering_key: str = "commercial_bikes", domain_hint: Optional[str] = None):
     console.print(f"\n[bold green]>>> Deep-diving account '{company_name}' fit for '{offering_key}'...[/bold green]")
     with console.status(f"[bold cyan]Harvesting live signals and executing ML inference for {company_name}...", spinner="dots"):
-        dossier = engine.evaluate_single_company(company_name, offering_key, domain_hint)
+        dossier = get_prospecting_engine().evaluate_single_company(company_name, offering_key, domain_hint)
     render_dossier(dossier, rank=1)
 
 

@@ -93,10 +93,10 @@ class CustomerProspectingEngine:
                 "name": resolved_entity.get("name", clean_input),
                 "domain": resolved_entity.get("domain", f"{clean_input.lower().replace(' ', '')}.com"),
                 "legal_name": resolved_entity.get("legal_name", clean_input),
-                "country": resolved_entity.get("country", "DE"),
-                "headcount": 15000,
-                "sector": "Industrial & Enterprise Operations",
-                "ticker": None,
+                "country": resolved_entity.get("country", "EU"),
+                "headcount": resolved_entity.get("headcount"),
+                "sector": resolved_entity.get("sector") or "Industrial & Enterprise Operations",
+                "ticker": resolved_entity.get("ticker"),
                 "description": resolved_entity.get("description", "Enterprise operator."),
                 "is_solvent": True,
                 "operational_attributes": {},
@@ -284,19 +284,22 @@ class CustomerProspectingEngine:
         ]
 
         # Estimated commercial scope
-        headcount = comp_data.get("headcount", 500)
-        if headcount >= 50000:
+        headcount = comp_data.get("headcount")
+        if headcount and headcount >= 50000:
             estimated_scope = "€1.5M - €5.0M Enterprise-Wide Fleet Deployment"
-        elif headcount >= 5000:
+        elif headcount and headcount >= 5000:
             estimated_scope = "€400K - €1.2M Multi-Facility Regional Rollout"
-        else:
+        elif headcount:
             estimated_scope = "€100K - €350K Targeted Operational Pilot"
+        else:
+            estimated_scope = "Targeted Commercial Evaluation"
 
         # Rationale and pitch
+        scale_text = f" and organizational scale ({headcount:,} employees)" if headcount else ""
         operational_rationale = (
             f"{company_name} exhibits ideal enterprise characteristics for {resolved_offering.title}: "
             f"{primary_wedge.name} provides immediate operational synergy with their {comp_data.get('sector', 'Enterprise')} footprint, "
-            f"supported by verified live buying signals and organizational scale ({headcount:,} employees)."
+            f"supported by verified live buying signals{scale_text}."
         )
 
         pitch = (
