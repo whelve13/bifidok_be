@@ -14,6 +14,7 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
+from engine.prospecting_engine import CustomerProspectingEngine
 from engine.offering_catalog import (
     FLAGSHIP_OFFERINGS,
     OfferingProfile,
@@ -37,6 +38,7 @@ from connectors.vulnerabilities import evaluate_vulnerability_exposure
 from connectors.tenders import fetch_public_procurement_tenders
 
 console = Console()
+engine = CustomerProspectingEngine()
 LAST_RESULTS: Any = None
 
 def display_offerings_catalog():
@@ -132,117 +134,48 @@ def prospect_and_render(offering_input: Any):
 
     console.print(f"\n[bold green]>>> Prospecting customer universe for offering: '{offering_key}'...[/bold green]")
     global LAST_RESULTS
-    with console.status("[bold cyan]Scanning enterprise candidates and retrieving scored leads from database...", spinner="dots"):
-        leads = query_prioritized_leads(offering_key, min_score=0)
-        LAST_RESULTS = leads
+    with console.status("[bold cyan]Scanning enterprise candidates, harvesting live connectors, computing multidimensional ML fit...", spinner="dots"):
+        result = engine.prospect_universe(offering_key)
+        LAST_RESULTS = result
 
-    if not leads:
-        console.print(f"[yellow]No qualified leads found in database for '{offering_key}'.[/yellow]")
-        console.print("[dim]Tip: Seed standard enterprise data by running: python cli.py seed[/dim]\n")
-        return
+    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{result.offering.title}[/bold cyan] ({result.offering.category})")
+    console.print(f"Total Candidates Evaluated: {result.total_evaluated}  |  Tier 1 Prime Targets: {result.tier1_count}  |  Tier 2 Strategic: {result.tier2_count}\n")
 
-    console.print(f"\n[bold white]Offering:[/bold white] [bold cyan]{offering_key}[/bold cyan]")
-    console.print(f"Total Qualified Leads: {len(leads)}\n")
-
-    summary_table = Table(title=f"Ranked Customer Universe - {offering_key}", box=box.HEAVY_EDGE)
+    summary_table = Table(title=f"Ranked Customer Universe - {result.offering.title}", box=box.HEAVY_EDGE)
     summary_table.add_column("Rank", justify="right", style="bold")
     summary_table.add_column("Company", style="bold white")
     summary_table.add_column("Domain", style="dim")
-    summary_table.add_column("Propensity Score", justify="right")
+    summary_table.add_column("Score", justify="right")
     summary_table.add_column("Tier", style="cyan")
-    summary_table.add_column("Primary Signal / Rationale", style="yellow")
+    summary_table.add_column("Primary Commercial Wedge", style="yellow")
+    summary_table.add_column("Solvent", justify="center")
 
-    for i, lead in enumerate(leads, 1):
-        score = float(lead.get("score", 0.0))
-        score_color = "bold green" if score >= 70 else ("bold yellow" if score >= 50 else "bold red")
-        tier = "Tier 1 - Prime Target" if score >= 75 else ("Tier 2 - Strategic" if score >= 50 else "Tier 3 - Nurture")
+    for i, c in enumerate(result.ranked_customers, 1):
+        score_color = "bold green" if c.propensity_score >= 70 else ("bold yellow" if c.propensity_score >= 50 else "bold red")
+        solvent_badge = "[green]Yes[/green]" if c.company.is_solvent else "[red]Insolvent[/red]"
         summary_table.add_row(
             str(i),
-            lead.get("company", "Unknown"),
-            lead.get("domain", ""),
-            f"[{score_color}]{score:.1f}[/{score_color}]",
-            tier,
-            lead.get("primary_signal", "")[:75]
+            c.company.name,
+            c.company.domain,
+            f"[{score_color}]{c.propensity_score:.1f}[/{score_color}]",
+            c.tier,
+            c.primary_commercial_wedge.name,
+            solvent_badge
         )
     console.print(summary_table)
 
     inspect_choice = Prompt.ask("\nEnter Rank # to view full dossier (or press Enter to return to menu)", default="")
     if inspect_choice.isdigit():
         idx = int(inspect_choice) - 1
-        if 0 <= idx < len(leads):
-            chosen = leads[idx]
-            evaluate_single_account(chosen.get("company", ""), offering_key, chosen.get("domain"))
+        if 0 <= idx < len(result.ranked_customers):
+            render_dossier(result.ranked_customers[idx], rank=idx+1)
 
 
 def evaluate_single_account(company_name: str, offering_key: str = "commercial_bikes", domain_hint: Optional[str] = None):
     console.print(f"\n[bold green]>>> Deep-diving account '{company_name}' fit for '{offering_key}'...[/bold green]")
-    clean_target = company_name.strip().lower()
-    session = SessionLocal()
-    try:
-        query = session.query(Company).filter(
-            (Company.name.ilike(f"%{clean_target}%")) |
-            (Company.domain.ilike(f"%{clean_target}%"))
-        )
-        if domain_hint:
-            clean_dom = domain_hint.strip().lower()
-            query = session.query(Company).filter(
-                (Company.domain == clean_dom) |
-                (Company.name.ilike(f"%{clean_target}%"))
-            )
-        comp = query.first()
-        if not comp:
-            console.print(f"[bold red]Company '{company_name}' not found in database.[/bold red]")
-            console.print("[dim]Tip: Seed canonical accounts with: python cli.py seed[/dim]")
-            return
-
-        lead_score = (
-            session.query(LeadScore)
-            .filter(LeadScore.company_id == comp.id)
-            .order_by(LeadScore.composite_score.desc())
-            .first()
-        )
-        score = float(lead_score.composite_score) if lead_score else 0.0
-
-        evals = (
-            session.query(SignalEvaluation)
-            .filter(SignalEvaluation.company_id == comp.id)
-            .order_by(SignalEvaluation.confidence.desc())
-            .all()
-        )
-
-        score_color = "bold green" if score >= 75 else ("bold yellow" if score >= 50 else "bold red")
-        tier = "Tier 1 - Prime Target" if score >= 75 else ("Tier 2 - Strategic Opportunity" if score >= 50 else "Tier 3 - Nurture")
-        border_color = "green" if score >= 70 else ("yellow" if score >= 50 else "red")
-
-        header_text = Text()
-        header_text.append(f"{comp.name} ({comp.domain})\n", style="bold white")
-        header_text.append(f"Sector: {comp.industry or 'Enterprise'}  |  Geography: {comp.geography or 'DE'}  |  Employees: {comp.employee_count or 'N/A'}\n", style="dim")
-        header_text.append("Propensity Score: ", style="bold")
-        header_text.append(f"{score:.1f}/100", style=score_color)
-        header_text.append(f"  [{tier}]\n", style="bold cyan")
-        if lead_score and lead_score.executive_summary:
-            header_text.append(f"Executive Summary: {lead_score.executive_summary}", style="italic")
-
-        console.print(Panel(header_text, title=f"[bold]Account Dossier - {comp.name}[/bold]", border_style=border_color))
-
-        if evals:
-            ev_table = Table(title=f"Harvested Verified Signal Evidence ({len(evals)} signals)", box=box.HORIZONTALS)
-            ev_table.add_column("Detected", justify="center", width=10)
-            ev_table.add_column("Confidence", justify="right", width=12)
-            ev_table.add_column("Verbatim Evidence Quote", style="white")
-            ev_table.add_column("Source URL", style="dim", width=30)
-
-            for ev in evals:
-                det_badge = "[green]YES[/green]" if ev.detected else "[red]NO[/red]"
-                conf_str = f"{ev.confidence * 100:.0f}%"
-                ev_table.add_row(det_badge, conf_str, (ev.evidence_quote[:120] + "...") if len(ev.evidence_quote) > 120 else ev.evidence_quote, ev.source_url or "N/A")
-            console.print(ev_table)
-        else:
-            console.print("[dim]No signal evaluations recorded for this company yet.[/dim]")
-
-        console.print("\n" + "-" * 75 + "\n")
-    finally:
-        session.close()
+    with console.status(f"[bold cyan]Harvesting live signals and executing ML inference for {company_name}...", spinner="dots"):
+        dossier = engine.evaluate_single_company(company_name, offering_key, domain_hint)
+    render_dossier(dossier, rank=1)
 
 
 def export_last_result():

@@ -1,52 +1,47 @@
 """
-Anti-hallucination verification guardrails.
-Enforces programmatic assertion that extracted LLM evidence quotes
-exist verbatim within the original ingested source text (Annex Section 4.1).
+Anti-Hallucination Verbatim Guardrail Module.
+Ensures every extracted quote exists verbatim in public source documents.
 """
-import logging
+import re
 from typing import Optional
 
-logger = logging.getLogger(__name__)
 
-
-def verify_verbatim_quote(evidence_quote: Optional[str], source_text: Optional[str]) -> bool:
+def verify_verbatim_quote(quote: str, source_text: str, min_length: int = 15) -> bool:
     """
-    Programmatic anti-hallucination guardrail (Annex Section 4.1).
-    Asserts that evidence_quote.strip().lower() exists as a verbatim substring
-    inside source_text.lower().
+    Symbolic assertion verifying that the extracted evidence quote exists
+    verbatim (character-level or normalized whitespace) within the source text.
 
     Args:
-        evidence_quote: The candidate quote extracted by the LLM.
-        source_text: The original raw source document or snippet.
+        quote: Extracted evidence quote string.
+        source_text: Raw ingested text stream.
+        min_length: Minimum character length to prevent trivial single-word matches.
 
     Returns:
-        bool: True if matched verbatim, False otherwise.
+        True if quote exists verbatim, False otherwise.
     """
-    if not isinstance(evidence_quote, str) or not isinstance(source_text, str):
+    if not quote or not source_text:
         return False
 
-    clean_quote = evidence_quote.strip()
-    clean_source = source_text.strip()
-    if not clean_quote or not clean_source:
+    clean_quote = quote.strip().strip("\"'")
+    if len(clean_quote) < min_length:
         return False
 
-    # 1. Exact or case-insensitive substring match
-    if clean_quote.lower() in clean_source.lower():
+    # 1. Exact string containment
+    if clean_quote in source_text:
         return True
 
-    # 2. Stripped outer quotation marks (common LLM formatting artifact)
-    unquoted = clean_quote.strip('"\'“”`')
-    if unquoted and unquoted.lower() in clean_source.lower():
+    # 2. Whitespace-normalized containment
+    norm_quote = re.sub(r"\s+", " ", clean_quote.lower()).strip()
+    norm_source = re.sub(r"\s+", " ", source_text.lower()).strip()
+
+    if norm_quote in norm_source:
         return True
 
-    # 3. Normalized whitespace match
-    norm_quote = " ".join(unquoted.split()).lower()
-    norm_source = " ".join(clean_source.split()).lower()
-    if norm_quote and norm_quote in norm_source:
+    # 3. Punctuation-relaxed containment
+    punct_quote = re.sub(r"[^\w\s]", "", norm_quote).strip()
+    punct_source = re.sub(r"[^\w\s]", "", norm_source).strip()
+
+    if len(punct_quote) >= min_length and punct_quote in punct_source:
         return True
 
-    logger.warning(
-        "Anti-hallucination check failed: Quote '%s' not found verbatim in source text.",
-        evidence_quote[:80],
-    )
     return False
