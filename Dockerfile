@@ -19,10 +19,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies (libpq for postgresql, curl for healthchecks)
+# Install runtime dependencies (libpq for postgresql, curl for healthchecks, libgomp1 for LightGBM OpenMP)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed dependencies from builder
