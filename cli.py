@@ -19,10 +19,12 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
-from backend.engine.bmaa_scorer import BMAAScorer
-from backend.connectors.firmographics import resolve_company_entity
+from backend.engine.prospecting_engine import CustomerProspectingEngine
+from backend.engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from backend.models import PerfectCustomerDossier, ProspectingUniverseResult
+
 from backend.connectors.financials import fetch_financial_signals
-from backend.connectors.news import fetch_company_news, evaluate_news_relevance
+from backend.connectors.news import fetch_company_news
 from backend.connectors.security import analyze_security_posture
 from backend.connectors.ats import fetch_ats_hiring_signals
 from backend.connectors.registries import verify_official_registry
@@ -31,112 +33,218 @@ from backend.connectors.vulnerabilities import evaluate_vulnerability_exposure
 from backend.connectors.tenders import fetch_public_procurement_tenders
 
 console = Console(force_terminal=True, highlight=False)
-last_analysis_result = None
+last_prospecting_result: ProspectingUniverseResult = None
+last_single_dossier: PerfectCustomerDossier = None
 
-def display_solutions():
-    scorer = BMAAScorer()
-    console.print(Panel.fit("[bold cyan]Orange Systems - Predefined Solutions Catalog[/bold cyan]", border_style="cyan"))
+def display_offerings_catalog():
+    console.print(Panel.fit(
+        "[bold cyan]Orange Systems - Commercial Offerings & Buyer Persona Catalog[/bold cyan]\n"
+        "[dim]Dynamic decomposition of products/services into operational wedges, buying signals, and ICP[/dim]",
+        border_style="cyan"
+    ))
     table = Table(box=box.ASCII, show_header=True, header_style="bold magenta", expand=True)
-    table.add_column("Solution ID", style="dim", ratio=2)
-    table.add_column("Solution Name", style="bold white", ratio=3)
-    table.add_column("Target ICP Sectors", style="green", ratio=2)
-    table.add_column("Key Signal Triggers", style="yellow", ratio=3)
+    table.add_column("Offering ID", style="dim", ratio=2)
+    table.add_column("Commercial Offering Title", style="bold white", ratio=3)
+    table.add_column("Category & Physical Footprint", style="cyan", ratio=3)
+    table.add_column("Operational Commercial Wedges", style="green", ratio=5)
 
-    for sol in scorer.solutions:
-        sectors = ", ".join(sol.target_icp.sectors[:3]) + "..."
-        triggers = ", ".join([c.signal_id for c in sol.alignment_criteria])
-        table.add_row(sol.solution_id, sol.solution_name, sectors, triggers)
+    for off_id, off in FLAGSHIP_OFFERINGS.items():
+        wedges_str = " • " + "\n • ".join([w.name for w in off.target_wedges])
+        footprint_str = f"{off.category}\n[yellow]Physical Footprint Required: {'Yes' if off.requires_physical_presence else 'No'}[/yellow]"
+        table.add_row(off.offering_id, off.title, footprint_str, wedges_str)
 
     console.print(table)
 
-def analyze_and_render(company_name: str, domain_hint: str = None):
-    global last_analysis_result
-    console.print(f"\n[bold cyan]>>> Fetching data from catalog endpoints for '{company_name}'...[/bold cyan]")
-    scorer = BMAAScorer()
-    result = scorer.analyze_company(company_name, domain_hint)
-    last_analysis_result = result
+def render_customer_dossier(dossier: PerfectCustomerDossier):
+    global last_single_dossier
+    last_single_dossier = dossier
+
+    comp = dossier.company
+    wedge = dossier.primary_commercial_wedge
+    breakdown = dossier.score_breakdown
 
     # 1. Company Profile Card
-    comp = result.company
     profile_text = Text()
     profile_text.append(f"Entity: {comp.name} ({comp.legal_name or comp.name})\n", style="bold white")
-    profile_text.append(f"Domain: {comp.domain}  |  Country: {comp.country}  |  Ticker: {comp.ticker or 'N/A'}\n", style="cyan")
-    profile_text.append(f"Headcount: {comp.headcount:,}  |  Sector: {comp.sector}\n", style="yellow")
+    profile_text.append(f"Domain: {comp.domain}  |  Country: {comp.country}  |  Ticker: {comp.ticker or 'Private / Non-listed'}\n", style="cyan")
+    profile_text.append(f"Headcount: {comp.headcount:,}  |  Sector: {comp.sector}  |  Solvency: {'Solvent & In Good Standing' if comp.is_solvent else 'INSOLVENT'}\n", style="yellow")
     if comp.description:
-        profile_text.append(f"Summary: {comp.description}\n", style="italic dim")
+        profile_text.append(f"Overview: {comp.description}\n", style="italic dim")
+
+    # Score Banner
+    score_color = "bold green" if dossier.propensity_score >= 80 else ("bold yellow" if dossier.propensity_score >= 60 else "bold red")
+    profile_text.append(f"\nBuying Propensity Score: ", style="bold white")
+    profile_text.append(f"{dossier.propensity_score:.1f}%", style=score_color)
+    profile_text.append(f"  |  Status: {dossier.tier}\n", style="bold cyan")
 
     console.print(Panel(profile_text, title=f"[bold]Account Dossier: {comp.name}[/bold]", border_style="blue"))
 
-    # 2. Ranked Solutions Alignment Table
-    sol_table = Table(title="Multi-Solution Alignment Ranking (BMAA Engine)", box=box.ASCII, expand=True)
-    sol_table.add_column("Rank", justify="center", style="bold", ratio=1)
-    sol_table.add_column("Solution Offering", style="bold white", ratio=5)
-    sol_table.add_column("Score", justify="right", ratio=2)
-    sol_table.add_column("Tier & Readiness", ratio=4)
-
-    for i, sol in enumerate(result.ranked_solutions, 1):
-        score_val = f"{sol.alignment_score:.1f}%"
-        if sol.alignment_score >= 75:
-            score_style = "[bold green]" + score_val + "[/bold green]"
-            tier_style = "[bold green]" + sol.tier + "[/bold green]"
-        elif sol.alignment_score >= 50:
-            score_style = "[bold yellow]" + score_val + "[/bold yellow]"
-            tier_style = "[bold yellow]" + sol.tier + "[/bold yellow]"
-        else:
-            score_style = "[bold red]" + score_val + "[/bold red]"
-            tier_style = "[dim]" + sol.tier + "[/dim]"
-
-        sol_table.add_row(str(i), sol.solution_name, score_style, tier_style)
-
-    console.print(sol_table)
-
-    # 3. Top Recommendation Spotlight & Additive Explainability Waterfall
-    top = result.best_solution
-    if top:
+    # If disqualified, show reason and stop
+    if dossier.is_disqualified:
         console.print(Panel(
-            f"[bold green]RECOMMENDED OFFERING:[/bold green] [bold white]{top.solution_name}[/bold white]\n"
-            f"[bold]Score:[/bold] {top.alignment_score:.1f}/100  |  [bold]Status:[/bold] {top.tier}",
-            border_style="green"
+            f"[bold red]DISQUALIFICATION NOTICE:[/bold red]\n{dossier.disqualification_reason}\n\n"
+            f"[italic]{dossier.operational_rationale}[/italic]",
+            border_style="red"
         ))
+        return
 
-        # Attribution Table
-        attr_table = Table(title="Explainability Trail: Additive Signal Attribution", box=box.ASCII, expand=True)
-        attr_table.add_column("Criteria / Signal", style="bold white", ratio=3)
-        attr_table.add_column("Endpoint Source", style="dim", ratio=3)
-        attr_table.add_column("Verifiable Evidence Discovered", style="italic", ratio=5)
-        attr_table.add_column("Pts Awarded", justify="right", style="bold green", ratio=2)
+    # 2. Multi-Dimensional Score Breakdown Waterfall
+    score_table = Table(title="Multi-Dimensional Propensity & Fit Attribution", box=box.ASCII, expand=True)
+    score_table.add_column("Evaluation Dimension", style="bold white", ratio=4)
+    score_table.add_column("Maximum Points", justify="center", style="dim", ratio=2)
+    score_table.add_column("Points Awarded", justify="right", style="bold green", ratio=2)
+    score_table.add_column("Dimension Core Assessment", style="italic", ratio=5)
 
-        for ev in top.evidence_trail:
-            pts_str = f"+{ev.score_points_awarded:.1f} pts" if ev.score_points_awarded > 0 else "0.0 pts"
-            attr_table.add_row(ev.signal_id, ev.source, ev.evidence_text or "No active trigger", pts_str)
+    score_table.add_row("Operational & Campus Fit", "35.0", f"{breakdown.operational_fit:.1f}", "Operational alignment with logistics, campus, or workforce archetype")
+    score_table.add_row("Timing & Live Public Triggers", "30.0", f"{breakdown.timing_urgency:.1f}", "Real-time Google News RSS, ESG decarbonization mandates & tenders")
+    score_table.add_row("Purchasing Power & Scale", "20.0", f"{breakdown.purchasing_scale:.1f}", "Enterprise headcount tier and financial operating margin")
+    score_table.add_row("Hiring Intent & Receptivity", "15.0", f"{breakdown.hiring_intent:.1f}", "Active recruitment in fleet, logistics, sustainability, or operations")
+    score_table.add_row("[bold]Composite Propensity Score[/bold]", "[bold]100.0[/bold]", f"[{score_color}]{breakdown.composite_score:.1f}%[/{score_color}]", f"[bold]{dossier.tier}[/bold]")
+    console.print(score_table)
 
-        console.print(attr_table)
+    # 3. Commercial Wedge Spotlight
+    wedge_panel = Text()
+    wedge_panel.append(f"Recommended Wedge: {wedge.name}\n", style="bold magenta")
+    wedge_panel.append(f"Target Archetype: {wedge.target_archetype}\n", style="dim")
+    wedge_panel.append(f"Commercial Value Driver: {wedge.value_driver}\n", style="bold green")
+    wedge_panel.append(f"Estimated Commercial Potential: {dossier.estimated_commercial_scope}\n", style="bold yellow")
+    wedge_panel.append(f"\nOperational Rationale: {dossier.operational_rationale}\n", style="italic white")
+    console.print(Panel(wedge_panel, title="[bold]Strategic Commercial Wedge & Sizing[/bold]", border_style="magenta"))
 
-        # 4. Tailored Sales Outreach Draft
-        pitch_panel = Panel(
-            f"[italic white]{top.tailored_pitch}[/italic white]",
-            title="[bold magenta]Generated Value Proposition (Ready for HubSpot / InMail)[/bold magenta]",
-            border_style="magenta"
+    # 4. Verified Live Signal Citations
+    if dossier.evidence_citations:
+        ev_table = Table(title="Live Verified Evidence & Signal Provenance", box=box.ASCII, expand=True)
+        ev_table.add_column("Signal Category", style="bold cyan", ratio=2)
+        ev_table.add_column("Headline / Context", style="bold white", ratio=4)
+        ev_table.add_column("Verbatim Citation & Snippet", style="italic", ratio=6)
+        ev_table.add_column("Source", style="dim", ratio=2)
+        ev_table.add_column("Impact", justify="right", style="green", ratio=1)
+
+        for ev in dossier.evidence_citations:
+            pts_str = f"+{ev.points_awarded:.1f} pts" if ev.points_awarded > 0 else "0.0 pts"
+            ev_table.add_row(ev.category, ev.title, ev.snippet, ev.source, pts_str)
+
+        console.print(ev_table)
+
+    # 5. Target Buying Committee / Decision Maker Personas
+    if dossier.target_buying_committee:
+        dm_table = Table(title="Target Buying Committee & Executive Personas", box=box.ASCII, expand=True)
+        dm_table.add_column("Executive Role / Title", style="bold yellow", ratio=3)
+        dm_table.add_column("Department", style="cyan", ratio=2)
+        dm_table.add_column("Core Mandate & Responsibilities", style="white", ratio=4)
+        dm_table.add_column("Specific Outreach Hook", style="italic green", ratio=4)
+
+        for dm in dossier.target_buying_committee:
+            dm_table.add_row(dm.title, dm.department, dm.mandate, dm.outreach_hook)
+
+        console.print(dm_table)
+
+    # 6. Consultative Strategic Pitch Brief (NOT a spam email!)
+    console.print(Panel(
+        f"[white]{dossier.strategic_pitch_narrative}[/white]",
+        title="[bold green]Executive Sales Intelligence Brief (For Account Executives)[/bold green]",
+        border_style="green"
+    ))
+
+def prospect_and_render(offering_key_or_text: str):
+    global last_prospecting_result
+    engine = CustomerProspectingEngine()
+    resolved_offering = engine._resolve_offering(offering_key_or_text)
+
+    # Banner
+    banner = Text()
+    banner.append(f"TARGET COMMERCIAL OFFERING: {resolved_offering.title}\n", style="bold green")
+    banner.append(f"Category: {resolved_offering.category}  |  Min Headcount: {resolved_offering.min_headcount:,}\n", style="cyan")
+    banner.append(f"Description: {resolved_offering.description}\n", style="italic white")
+    banner.append(f"Target Sectors: {', '.join(resolved_offering.target_sectors[:4])}...\n", style="yellow")
+    console.print(Panel(banner, title="[bold]Autonomous Prospecting Search Launched[/bold]", border_style="cyan"))
+
+    console.print(f"[bold cyan]>>> Scanning candidate universe and harvesting live multi-source signals...[/bold cyan]")
+    universe_result = engine.prospect_universe(resolved_offering)
+    last_prospecting_result = universe_result
+
+    # Leaderboard Table
+    lb_table = Table(
+        title=f"Perfect Customer Leaderboard for '{resolved_offering.title}' ({universe_result.total_evaluated} Evaluated | {universe_result.tier1_count} Prime Targets)",
+        box=box.ASCII,
+        expand=True
+    )
+    lb_table.add_column("Rank", justify="center", style="bold", ratio=1)
+    lb_table.add_column("Target Enterprise", style="bold white", ratio=3)
+    lb_table.add_column("Propensity Score", justify="right", ratio=2)
+    lb_table.add_column("Buying Intent Tier", ratio=3)
+    lb_table.add_column("Recommended Commercial Wedge", style="cyan", ratio=4)
+    lb_table.add_column("Headcount", justify="right", style="yellow", ratio=2)
+    lb_table.add_column("Industry Sector", style="dim", ratio=3)
+
+    for i, d in enumerate(universe_result.ranked_customers, 1):
+        if d.is_disqualified:
+            score_str = "[bold red]0.0%[/bold red]" if d.propensity_score == 0 else f"[bold red]{d.propensity_score:.1f}%[/bold red]"
+            tier_str = f"[bold red]{d.tier}[/bold red]"
+            wedge_str = f"[dim]{d.primary_commercial_wedge.name}[/dim]"
+        elif d.propensity_score >= 80.0:
+            score_str = f"[bold green]{d.propensity_score:.1f}%[/bold green]"
+            tier_str = f"[bold green]{d.tier}[/bold green]"
+            wedge_str = f"[bold green]{d.primary_commercial_wedge.name}[/bold green]"
+        elif d.propensity_score >= 60.0:
+            score_str = f"[bold yellow]{d.propensity_score:.1f}%[/bold yellow]"
+            tier_str = f"[bold yellow]{d.tier}[/bold yellow]"
+            wedge_str = f"[bold yellow]{d.primary_commercial_wedge.name}[/bold yellow]"
+        else:
+            score_str = f"[white]{d.propensity_score:.1f}%[/white]"
+            tier_str = f"[dim]{d.tier}[/dim]"
+            wedge_str = f"[dim]{d.primary_commercial_wedge.name}[/dim]"
+
+        hc_str = f"{d.company.headcount:,}" if d.company.headcount else "N/A"
+        lb_table.add_row(str(i), d.company.name, score_str, tier_str, wedge_str, hc_str, d.company.sector)
+
+    console.print(lb_table)
+
+    # Sub-menu to inspect dossiers
+    while True:
+        choice = Prompt.ask(
+            "\nEnter Rank # (1-N) to open full Actionable Sales Dossier (or '0' to return to Main Menu)",
+            default="1"
         )
-        console.print(pitch_panel)
+        if choice == "0":
+            break
+        try:
+            rank_idx = int(choice) - 1
+            if 0 <= rank_idx < len(universe_result.ranked_customers):
+                selected_dossier = universe_result.ranked_customers[rank_idx]
+                console.rule(f"[bold green]Opening Dossier: {selected_dossier.company.name}[/bold green]")
+                render_customer_dossier(selected_dossier)
+            else:
+                console.print("[red]Invalid rank number.[/red]")
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
 
-    return result
+def evaluate_single_account(company_name: str, offering_input: str, domain_hint: str = None):
+    console.print(f"\n[bold cyan]>>> Analyzing fit of '{company_name}' for '{offering_input}'...[/bold cyan]")
+    engine = CustomerProspectingEngine()
+    dossier = engine.analyze_single_prospect(company_name, offering_input, domain_hint)
+    render_customer_dossier(dossier)
+    return dossier
 
 def export_last_result():
-    global last_analysis_result
-    if not last_analysis_result:
-        console.print("[bold red]No analysis result in memory to export. Run an analysis first![/bold red]")
-        return
-    
+    global last_prospecting_result, last_single_dossier
     output_filename = "analysis_output.json"
-    with open(output_filename, "w", encoding="utf-8") as f:
-        json.dump(last_analysis_result.model_dump(), f, indent=2)
-    console.print(f"[bold green]Successfully exported analysis to {output_filename}[/bold green]")
+
+    if last_prospecting_result:
+        with open(output_filename, "w", encoding="utf-8") as f:
+            json.dump(last_prospecting_result.model_dump(), f, indent=2)
+        console.print(f"[bold green]Successfully exported {last_prospecting_result.total_evaluated} candidate dossiers to {output_filename}[/bold green]")
+    elif last_single_dossier:
+        with open(output_filename, "w", encoding="utf-8") as f:
+            json.dump(last_single_dossier.model_dump(), f, indent=2)
+        console.print(f"[bold green]Successfully exported {last_single_dossier.company.name} dossier to {output_filename}[/bold green]")
+    else:
+        console.print("[bold red]No prospecting result in memory to export. Run a prospecting search first![/bold red]")
 
 def test_individual_connectors():
     console.print("\n[bold cyan]Select an Endpoint Connector to Test Individually:[/bold cyan]")
     console.print("  [1] Yahoo Finance & yfinance (Ticker, Margins, Headcount)")
-    console.print("  [2] Google News RSS (DACH & Pan-EU Business Feeds)")
+    console.print("  [2] Google News RSS (Dynamic Keywords & Signals)")
     console.print("  [3] Applicant Tracking Systems (Greenhouse, Lever, Personio)")
     console.print("  [4] Security OSINT & Perimeter Resilience (Headers & Subdomains)")
     console.print("  [5] Official EU Corporate Registries (French SIRENE & Norwegian Brreg)")
@@ -149,8 +257,7 @@ def test_individual_connectors():
     if choice == "0":
         return
 
-    company = Prompt.ask("Enter company name to test", default="Siemens")
-
+    company = Prompt.ask("Enter company name to test", default="DHL Group")
     domain_default = company if "." in company else f"{company.lower().replace(' ', '')}.com"
 
     if choice == "1":
@@ -158,12 +265,16 @@ def test_individual_connectors():
         fin = fetch_financial_signals(company)
         console.print_json(data=fin)
     elif choice == "2":
-        console.print(f"[yellow]Querying Google News RSS for '{company}'...[/yellow]")
-        news = fetch_company_news(company)
+        kws = Prompt.ask("Enter search keywords (comma-separated)", default="fleet, cargo bike, net zero, logistics")
+        kw_list = [k.strip() for k in kws.split(",")]
+        console.print(f"[yellow]Querying Google News RSS for '{company}' with keywords {kw_list}...[/yellow]")
+        news = fetch_company_news(company, kw_list)
         console.print_json(data=news[:3] if news else [])
     elif choice == "3":
+        roles = Prompt.ask("Enter target roles (comma-separated)", default="Fleet Manager, Sustainability, Logistics")
+        role_list = [r.strip() for r in roles.split(",")]
         console.print(f"[yellow]Scanning Public ATS Boards for '{company}'...[/yellow]")
-        ats = fetch_ats_hiring_signals(company)
+        ats = fetch_ats_hiring_signals(company, role_list)
         console.print_json(data=ats)
     elif choice == "4":
         domain = Prompt.ask("Enter domain to audit", default=domain_default)
@@ -185,25 +296,56 @@ def test_individual_connectors():
         vulns = evaluate_vulnerability_exposure(sec.get("exposed_subdomains", []))
         console.print_json(data=vulns)
     elif choice == "8":
-        console.print(f"[yellow]Scanning European Public IT Tenders for '{company}'...[/yellow]")
-        tenders = fetch_public_procurement_tenders(company)
+        tender_kws = Prompt.ask("Enter tender keywords", default="fleet, mobility, leasing, transport")
+        tk_list = [k.strip() for k in tender_kws.split(",")]
+        console.print(f"[yellow]Scanning European Public Tenders for '{company}'...[/yellow]")
+        tenders = fetch_public_procurement_tenders(company, tk_list)
         console.print_json(data=tenders)
+
+def render_gnn_prediction(company_name: str):
+    from backend.gnn.inference import HTGNNInferenceEngine
+    console.print(f"\n[bold magenta]>>> Executing HT-GNN Neural Message-Passing for '{company_name}'...[/bold magenta]")
+    engine = HTGNNInferenceEngine()
+    pred = engine.predict_account(company_name)
+
+    score_style = "bold green" if pred["overall_readiness_score"] >= 70 else ("bold yellow" if pred["overall_readiness_score"] >= 45 else "bold red")
+    summary = Text()
+    summary.append(f"Target Account: {pred['company_name']}\n", style="bold white")
+    summary.append(f"HT-GNN Buying Readiness Score: ", style="bold white")
+    summary.append(f"{pred['overall_readiness_score']}/100", style=score_style)
+    summary.append(f"  |  Tier: {pred['tier']}\n", style="cyan")
+    summary.append(f"Recommended Solution: {pred['best_solution']}\n", style="bold yellow")
+    console.print(Panel(summary, title="[bold]HT-GNN Graph Intent Prediction[/bold]", border_style="magenta"))
+
+    table = Table(title="Multi-Relational Ecosystem Influences", box=box.ASCII, expand=True)
+    table.add_column("Relation Type", style="bold cyan", ratio=2)
+    table.add_column("Connected Entities & Signals", style="white", ratio=6)
+
+    comp_list = ", ".join([f"{c['name']} ({'Active Buyer' if c['buyer_label'] else 'Peer'})" for c in pred["ecosystem_attribution"]["competitors"][:3]])
+    tech_list = ", ".join(pred["ecosystem_attribution"]["technologies"][:4])
+    reg_list = ", ".join(pred["ecosystem_attribution"]["regulations"][:3])
+
+    table.add_row("Competitor Contagion", comp_list or "No direct sector rivals in immediate graph neighborhood")
+    table.add_row("Technology Stack", tech_list or "Standard enterprise infrastructure")
+    table.add_row("Regulatory Mandates", reg_list or "Baseline corporate standards")
+    console.print(table)
+    console.print(Panel(pred["grounded_pitch"], title="[bold green]Graph-Grounded Value Proposition[/bold green]", border_style="green"))
 
 def interactive_menu():
     while True:
-        console.print("\n" + "=" * 70)
+        console.print("\n" + "=" * 75)
         console.print(Panel.fit(
-            "[bold white]Orange Systems - AI B2B Sales Intelligence Platform[/bold white]\n"
-            "[dim]Bayesian Multi-Attribute Alignment Engine (BMAA)[/dim]",
+            "[bold white]Orange Systems - Autonomous Customer Prospecting & Buying Intent Engine[/bold white]\n"
+            "[dim]Dynamic Offering Decomposer • Multi-Source Evidence Harvesting • Actionable Sales Dossiers[/dim]",
             border_style="cyan"
         ))
         console.print("[bold yellow]MAIN MENU:[/bold yellow]")
-        console.print("  [bold green][1][/bold green] Analyze Enterprise Account (Custom Input)")
-        console.print("  [bold green][2][/bold green] Quick Account Presets (Siemens, Knorr-Bremse, N26, Zalando)")
-        console.print("  [bold green][3][/bold green] View Predefined Solutions Catalog & Criteria")
-        console.print("  [bold green][4][/bold green] Test Individual Catalog Connectors (Live APIs)")
-        console.print("  [bold green][5][/bold green] Export Last Analysis Result to JSON (HubSpot Hook)")
-        console.print("  [bold green][6][/bold green] Run Multi-Account Comparative Demo")
+        console.print("  [bold green][1][/bold green] Find Perfect Customers for an Offering (e.g. Bikes, Automation, Cyber, Custom)")
+        console.print("  [bold green][2][/bold green] Deep-Dive Single Enterprise Fit for an Offering (e.g. Test DHL, Siemens, Zalando for Bikes)")
+        console.print("  [bold green][3][/bold green] Explore Commercial Offerings & Intelligent Operational Wedges")
+        console.print("  [bold green][4][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
+        console.print("  [bold green][5][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
+        console.print("  [bold green][6][/bold green] Run HT-GNN Graph Intelligence & Ecosystem Ripple Analysis")
         console.print("  [bold red][0][/bold red] Exit")
 
         choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6"], default="1")
@@ -212,67 +354,92 @@ def interactive_menu():
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
             break
         elif choice == "1":
-            comp_name = Prompt.ask("Enter target company name (e.g. Siemens, SAP, Airbus)")
-            dom_hint = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
-            analyze_and_render(comp_name, dom_hint if dom_hint.strip() else None)
+            console.print("\n[bold yellow]Select a Commercial Offering to find customers for:[/bold yellow]")
+            console.print("  [bold green][1][/bold green] Commercial E-Bike Fleets & Cargo Bicycles [dim](Orange's New Offering: Urban delivery, campus transit, JobRad)[/dim]")
+            console.print("  [bold green][2][/bold green] Agentic Process Automation & AI Workforce [dim](Back-office overhead & process mining)[/dim]")
+            console.print("  [bold green][3][/bold green] Managed SOC & NIS2/DORA Cyber Resilience [dim](Perimeter compliance & 24/7 SOC)[/dim]")
+            console.print("  [bold green][4][/bold green] Custom Commercial Offering [dim](Type ANY product or service you want to sell)[/dim]")
+
+            off_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
+            if off_choice == "1":
+                prospect_and_render("commercial_bikes")
+            elif off_choice == "2":
+                prospect_and_render("agentic_automation")
+            elif off_choice == "3":
+                prospect_and_render("managed_soc")
+            elif off_choice == "4":
+                custom_off = Prompt.ask("Enter what you want to sell (e.g. 'Warehouse Robotics', 'Commercial Solar Panels', 'Electric Delivery Vans')")
+                prospect_and_render(custom_off)
+
         elif choice == "2":
-            console.print("\n[bold yellow]Select a preset enterprise account:[/bold yellow]")
-            console.print("  [1] Siemens AG (DAX 40 Industrials)")
-            console.print("  [2] Knorr-Bremse AG (Manufacturing / Automation)")
-            console.print("  [3] N26 Bank (Fintech / European Banking)")
-            console.print("  [4] Zalando SE (DAX E-Commerce & Retail)")
-            p_choice = Prompt.ask("Choose preset", choices=["1", "2", "3", "4"], default="1")
-            presets = {
-                "1": ("Siemens", "siemens.com"),
-                "2": ("Knorr-Bremse", "knorr-bremse.com"),
-                "3": ("N26 Bank", "n26.com"),
-                "4": ("Zalando", "zalando.de")
+            comp_name = Prompt.ask("Enter company name to evaluate (e.g. DHL Group, BASF, Siemens, Zalando)")
+            dom_hint = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
+
+            console.print("\n[bold yellow]Select the Commercial Offering to evaluate against:[/bold yellow]")
+            console.print("  [1] Commercial E-Bike Fleets & Cargo Bicycles")
+            console.print("  [2] Agentic Process Automation & AI Workforce")
+            console.print("  [3] Managed SOC & NIS2 Cyber Resilience")
+            console.print("  [4] Custom Offering Text")
+            o_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
+
+            off_map = {
+                "1": "commercial_bikes",
+                "2": "agentic_automation",
+                "3": "managed_soc"
             }
-            comp_name, dom_hint = presets[p_choice]
-            analyze_and_render(comp_name, dom_hint)
+            if o_choice == "4":
+                offering_str = Prompt.ask("Enter offering text")
+            else:
+                offering_str = off_map[o_choice]
+
+            evaluate_single_account(comp_name, offering_str, dom_hint if dom_hint.strip() else None)
+
         elif choice == "3":
-            display_solutions()
+            display_offerings_catalog()
         elif choice == "4":
             test_individual_connectors()
         elif choice == "5":
             export_last_result()
         elif choice == "6":
-            console.print(Panel.fit("[bold green]Running Multi-Account Demo (DACH & Pan-EU Accounts)[/bold green]"))
-            demo_companies = [("Siemens", "siemens.com"), ("N26 Bank", "n26.com")]
-            for c_name, c_dom in demo_companies:
-                console.rule(f"[bold cyan]Analyzing {c_name}[/bold cyan]")
-                analyze_and_render(c_name, c_dom)
-                console.print("\n")
+            comp_name = Prompt.ask("Enter company name for HT-GNN Graph Analysis", default="Knorr-Bremse")
+            render_gnn_prediction(comp_name)
 
 def main():
-    parser = argparse.ArgumentParser(description="Orange Systems AI B2B Sales Intelligence CLI")
+    parser = argparse.ArgumentParser(description="Orange Systems Autonomous Customer Prospecting CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Command: menu
     subparsers.add_parser("menu", help="Launch interactive navigation menu")
 
-    # Command: solutions
-    subparsers.add_parser("solutions", help="List predefined solutions from JSON")
+    # Command: offerings
+    subparsers.add_parser("offerings", help="List commercial offerings and buyer archetypes")
 
-    # Command: analyze
-    analyze_parser = subparsers.add_parser("analyze", help="Analyze a company and match solutions")
-    analyze_parser.add_argument("--company", required=True, help="Company name (e.g. Siemens, Knorr-Bremse, N26)")
-    analyze_parser.add_argument("--domain", required=False, default=None, help="Optional company domain hint")
+    # Command: prospect
+    prospect_parser = subparsers.add_parser("prospect", help="Prospect and rank perfect customers for an offering")
+    prospect_parser.add_argument("--offering", required=False, default="commercial_bikes", help="Offering key or description (e.g. 'commercial_bikes', 'Bikes', 'Automation')")
 
-    # Command: demo
-    subparsers.add_parser("demo", help="Run end-to-end demo on European enterprise accounts")
+    # Command: evaluate
+    eval_parser = subparsers.add_parser("evaluate", help="Deep-dive account fit for an offering")
+    eval_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens, Zalando)")
+    eval_parser.add_argument("--offering", required=False, default="commercial_bikes", help="Offering name (default: commercial_bikes)")
+    eval_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
+
+    # Command: gnn
+    gnn_parser = subparsers.add_parser("gnn", help="Run HT-GNN graph neural prediction on an account")
+    gnn_parser.add_argument("--company", required=True, help="Company name (e.g. Knorr-Bremse, Siemens, Lufthansa Group)")
 
     args = parser.parse_args()
 
-    # If no subcommand passed, launch interactive menu by default
     if args.command is None or args.command == "menu":
         interactive_menu()
-    elif args.command == "solutions":
-        display_solutions()
-    elif args.command == "analyze":
-        analyze_and_render(args.company, args.domain)
-    elif args.command == "demo":
-        interactive_menu()
+    elif args.command == "offerings":
+        display_offerings_catalog()
+    elif args.command == "prospect":
+        prospect_and_render(args.offering)
+    elif args.command == "evaluate":
+        evaluate_single_account(args.company, args.offering, args.domain)
+    elif args.command == "gnn":
+        render_gnn_prediction(args.company)
 
 if __name__ == "__main__":
     main()

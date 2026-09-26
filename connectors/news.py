@@ -13,10 +13,17 @@ def fetch_company_news(company_name: str, custom_keywords: List[str] = None) -> 
     news_items = []
     
     # Target search queries for sales triggers
-    queries = [
-        f'{company_name} (automation OR efficiency OR restructuring OR AI OR cloud)',
-        f'{company_name} (Automatisierung OR Stellenabbau OR Kostensenkung)'
-    ]
+    if custom_keywords and len(custom_keywords) > 0:
+        kw_str = " OR ".join(custom_keywords[:5])
+        queries = [
+            f'"{company_name}" ({kw_str})',
+            f'{company_name} ({kw_str})'
+        ]
+    else:
+        queries = [
+            f'{company_name} (automation OR efficiency OR restructuring OR AI OR cloud)',
+            f'{company_name} (Automatisierung OR Stellenabbau OR Kostensenkung)'
+        ]
 
     for q in queries:
         try:

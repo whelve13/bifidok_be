@@ -23,9 +23,14 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list) and len(data) > 0:
-                    top = data[0]
-                    resolved["domain"] = top.get("domain", "")
-                    resolved["name"] = top.get("name", company_name)
+                    clean_first = company_name.lower().split()[0]
+                    for item in data:
+                        item_name = item.get("name", "").lower()
+                        item_dom = item.get("domain", "").lower()
+                        if clean_first in item_name or clean_first in item_dom:
+                            resolved["domain"] = item.get("domain", "")
+                            resolved["name"] = item.get("name", company_name)
+                            break
         except Exception:
             pass
 

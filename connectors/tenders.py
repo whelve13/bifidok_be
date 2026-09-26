@@ -5,9 +5,9 @@ from typing import Dict, Any, List
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-def fetch_public_procurement_tenders(company_name: str) -> Dict[str, Any]:
+def fetch_public_procurement_tenders(company_name: str, keywords: List[str] = None) -> Dict[str, Any]:
     """
-    Searches European public procurement notices and IT modernization RFPs
+    Searches European public procurement notices and modernization RFPs
     (Rows 37, 38 of data_api_endpoints.xlsx).
     """
     results = {
@@ -21,7 +21,11 @@ def fetch_public_procurement_tenders(company_name: str) -> Dict[str, Any]:
 
     # Search European procurement notices via OpenTender & public tender feeds
     try:
-        query = f'"{clean_name}" (tender OR RFP OR procurement OR "contract award") (IT OR cloud OR software OR automation)'
+        if keywords and len(keywords) > 0:
+            kw_filter = " OR ".join(keywords[:5])
+            query = f'"{clean_name}" (tender OR RFP OR procurement OR "contract award") ({kw_filter})'
+        else:
+            query = f'"{clean_name}" (tender OR RFP OR procurement OR "contract award") (IT OR cloud OR software OR automation)'
         encoded = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=en-GB&gl=GB"
         resp = requests.get(url, headers=HEADERS, timeout=4)

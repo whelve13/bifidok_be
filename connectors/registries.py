@@ -25,20 +25,28 @@ def verify_official_registry(company_name: str) -> Dict[str, Any]:
 
     # 1. French SIRENE API (data.gouv.fr - Row 31)
     try:
-        url = f"https://recherche-entreprises.api.gouv.fr/search?q={clean_name}&per_page=1"
+        url = f"https://recherche-entreprises.api.gouv.fr/search?q={clean_name}&per_page=5"
         resp = requests.get(url, headers=HEADERS, timeout=4)
         if resp.status_code == 200:
-            data = resp.json().get("results", [])
-            if data:
-                top = data[0]
+            results = resp.json().get("results", [])
+            # Find an entry whose name actually matches the company name
+            clean_first = clean_name.lower().split()[0]
+            matched_entry = None
+            for item in results:
+                nom = item.get("nom_complet", "").lower()
+                if clean_first in nom or clean_name.lower() in nom:
+                    matched_entry = item
+                    break
+
+            if matched_entry:
                 result["registry_source"] = "French SIRENE (data.gouv.fr)"
-                result["legal_name"] = top.get("nom_complet")
-                result["registration_id"] = f"SIREN {top.get('siren')}"
-                etat = top.get("etat_administratif", "A")
+                result["legal_name"] = matched_entry.get("nom_complet")
+                result["registration_id"] = f"SIREN {matched_entry.get('siren')}"
+                etat = matched_entry.get("etat_administratif", "A")
                 result["is_active"] = (etat == "A")
                 result["is_solvent"] = (etat == "A")
-                result["employee_range"] = top.get("tranche_effectif_salarie")
-                result["industry_code"] = f"NAF {top.get('activite_principale')}"
+                result["employee_range"] = matched_entry.get("tranche_effectif_salarie")
+                result["industry_code"] = f"NAF {matched_entry.get('activite_principale')}"
                 
                 status_str = "Active & In Good Standing" if result["is_active"] else "Ceased / Insolvent"
                 result["evidence"].append(

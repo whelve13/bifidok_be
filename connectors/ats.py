@@ -91,7 +91,8 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
     # Fallback: Query Google News for public recruitment and hiring signals
     try:
         import urllib.parse
-        q = urllib.parse.quote(f"{company_name} (hiring OR recruitment OR vacancies) (automation OR AI OR Celonis OR RPA OR Cloud)")
+        kw_filter = " OR ".join(keywords[:5]) if keywords else "hiring OR vacancies"
+        q = urllib.parse.quote(f"{company_name} (hiring OR recruitment OR vacancies) ({kw_filter})")
         url = f"https://news.google.com/rss/search?q={q}&hl=en-GB&gl=GB"
         resp = requests.get(url, headers=HEADERS, timeout=3)
         if resp.status_code == 200:
