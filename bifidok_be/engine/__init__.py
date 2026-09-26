@@ -1,25 +1,17 @@
+"""
+Autonomous Enterprise Discovery & Customer Prospecting Engine.
+"""
+from .offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from .candidate_pool import get_candidate_universe, find_candidate_by_name
+from .prospecting_engine import CustomerProspectingEngine
 from .anti_hallucination import verify_verbatim_quote
-from .gemini_extractor import (
-    extract_signal_evidence,
-    verify_verbatim_quote,
-    get_genai_client,
-)
-from .scoring_service import (
-    calculate_deterministic_score,
-    compute_composite_3layer_score,
-    record_lead_feedback,
-    get_lead_feedback,
-    clear_lead_feedback,
-)
 
 __all__ = [
-    "extract_signal_evidence",
+    "FLAGSHIP_OFFERINGS",
+    "decompose_custom_offering",
+    "get_candidate_universe",
+    "find_candidate_by_name",
+    "CustomerProspectingEngine",
     "verify_verbatim_quote",
-    "get_genai_client",
-    "calculate_deterministic_score",
-    "compute_composite_3layer_score",
-    "record_lead_feedback",
-    "get_lead_feedback",
-    "clear_lead_feedback",
-    "verify_verbatim_quote"
 ]
+
