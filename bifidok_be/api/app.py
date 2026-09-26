@@ -75,7 +75,7 @@ app.include_router(outreach_router)
 app.include_router(auth_router)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     """
     Health check endpoint returning system status and current timestamp.
@@ -86,7 +86,7 @@ def health():
     }
 
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 def healthz(response: Response):
     """
     Comprehensive preflight health check probing Database, Redis, and Gemini.
@@ -99,7 +99,7 @@ def healthz(response: Response):
     return diag
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     """
     Root API discovery endpoint providing platform metadata and core endpoints.
