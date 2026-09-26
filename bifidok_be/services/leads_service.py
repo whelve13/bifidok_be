@@ -5,6 +5,7 @@ Connects database persistence, caching, and MCP tool handlers.
 import json
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -292,3 +293,58 @@ def queue_sales_outreach(
             pass
 
     return payload
+
+
+# In-memory store for HitL feedback calibration
+_FEEDBACK_STORE: List[Dict[str, Any]] = []
+
+
+def record_lead_feedback(
+    lead_id: str,
+    is_accurate: bool,
+    notes: str = "",
+) -> Dict[str, Any]:
+    """
+    Records human-in-the-loop feedback on lead scoring accuracy for model calibration.
+    Stores the feedback entry in-memory and appends to data/lead_feedback.jsonl.
+    """
+    feedback_entry = {
+        "feedback_id": str(uuid.uuid4()),
+        "lead_id": str(lead_id),
+        "is_accurate": bool(is_accurate),
+        "notes": str(notes or "").strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "RECORDED",
+    }
+
+    _FEEDBACK_STORE.append(feedback_entry)
+
+    # Persist to disk in data directory
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.abspath(os.path.join(current_dir, "..", "data"))
+        os.makedirs(data_dir, exist_ok=True)
+        file_path = os.path.join(data_dir, "lead_feedback.jsonl")
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(feedback_entry) + "\n")
+    except Exception as exc:
+        logger.warning("Could not persist lead feedback to disk: %s", exc)
+
+    return feedback_entry
+
+
+def get_lead_feedback(lead_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retrieves stored feedback records, optionally filtered by lead_id.
+    """
+    if lead_id:
+        target = str(lead_id)
+        return [entry for entry in _FEEDBACK_STORE if entry["lead_id"] == target]
+    return list(_FEEDBACK_STORE)
+
+
+def clear_lead_feedback() -> None:
+    """Clears in-memory feedback store (primarily for test teardowns)."""
+    global _FEEDBACK_STORE
+    _FEEDBACK_STORE = []
+
