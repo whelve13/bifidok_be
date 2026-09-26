@@ -6,7 +6,7 @@ dynamic offering decomposition, live evidence harvesting, and strategic sales do
 import concurrent.futures
 from typing import List, Dict, Any, Optional, Union
 
-from backend.models import (
+from models import (
     CompanyProfile,
     OfferingProfile,
     CommercialWedge,
@@ -16,15 +16,15 @@ from backend.models import (
     PerfectCustomerDossier,
     ProspectingUniverseResult
 )
-from backend.engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
-from backend.engine.candidate_pool import get_candidate_universe, find_candidate_by_name
+from engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
+from engine.candidate_pool import get_candidate_universe, find_candidate_by_name
 
-from backend.connectors.firmographics import resolve_company_entity
-from backend.connectors.financials import fetch_financial_signals
-from backend.connectors.news import fetch_company_news, evaluate_news_relevance
-from backend.connectors.ats import fetch_ats_hiring_signals
-from backend.connectors.registries import verify_official_registry
-from backend.connectors.tenders import fetch_public_procurement_tenders
+from connectors.firmographics import resolve_company_entity
+from connectors.financials import fetch_financial_signals
+from connectors.news import fetch_company_news, evaluate_news_relevance
+from connectors.ats import fetch_ats_hiring_signals
+from connectors.registries import verify_official_registry
+from connectors.tenders import fetch_public_procurement_tenders
 
 class CustomerProspectingEngine:
     """
