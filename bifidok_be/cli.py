@@ -22,13 +22,6 @@ from rich import box
 
 from engine.prospecting_engine import CustomerProspectingEngine
 from engine.offering_catalog import FLAGSHIP_OFFERINGS, decompose_custom_offering
-from engine.gemini_extractor import extract_signal_evidence, verify_verbatim_quote
-from engine.scoring_service import (
-    calculate_deterministic_score,
-    compute_composite_3layer_score,
-    record_lead_feedback,
-    get_lead_feedback,
-)
 from models import PerfectCustomerDossier, ProspectingUniverseResult
 
 from connectors.financials import fetch_financial_signals
@@ -310,228 +303,6 @@ def test_individual_connectors():
         tenders = fetch_public_procurement_tenders(company, tk_list)
         console.print_json(data=tenders)
 
-def render_gnn_prediction(company_name: str):
-    from gnn.inference import HTGNNInferenceEngine
-    console.print(f"\n[bold magenta]>>> Executing HT-GNN Neural Message-Passing for '{company_name}'...[/bold magenta]")
-    engine = HTGNNInferenceEngine()
-    pred = engine.predict_account(company_name)
-
-    score_style = "bold green" if pred["overall_readiness_score"] >= 70 else ("bold yellow" if pred["overall_readiness_score"] >= 45 else "bold red")
-    summary = Text()
-    summary.append(f"Target Account: {pred['company_name']}\n", style="bold white")
-    summary.append(f"HT-GNN Buying Readiness Score: ", style="bold white")
-    summary.append(f"{pred['overall_readiness_score']}/100", style=score_style)
-    summary.append(f"  |  Tier: {pred['tier']}\n", style="cyan")
-    summary.append(f"Recommended Solution: {pred['best_solution']}\n", style="bold yellow")
-    console.print(Panel(summary, title="[bold]HT-GNN Graph Intent Prediction[/bold]", border_style="magenta"))
-
-    table = Table(title="Multi-Relational Ecosystem Influences", box=box.ASCII, expand=True)
-    table.add_column("Relation Type", style="bold cyan", ratio=2)
-    table.add_column("Connected Entities & Signals", style="white", ratio=6)
-
-    comp_list = ", ".join([f"{c['name']} ({'Active Buyer' if c['buyer_label'] else 'Peer'})" for c in pred["ecosystem_attribution"]["competitors"][:3]])
-    tech_list = ", ".join(pred["ecosystem_attribution"]["technologies"][:4])
-    reg_list = ", ".join(pred["ecosystem_attribution"]["regulations"][:3])
-
-    table.add_row("Competitor Contagion", comp_list or "No direct sector rivals in immediate graph neighborhood")
-    table.add_row("Technology Stack", tech_list or "Standard enterprise infrastructure")
-    table.add_row("Regulatory Mandates", reg_list or "Baseline corporate standards")
-    console.print(table)
-    console.print(Panel(pred["grounded_pitch"], title="[bold green]Graph-Grounded Value Proposition[/bold green]", border_style="green"))
-
-def render_3layer_hybrid_scoring(target_company: Optional[str] = None):
-    console.print("\n" + "=" * 75)
-    console.print(Panel.fit(
-        "[bold cyan]3-Layer Hybrid Brain Pipeline[/bold cyan]\n"
-        "[dim]Layer 1: Gemini AI Signal Extraction • Layer 2: Annex 4.2 Deterministic Formula • Layer 3: PyG HT-GNN Graph[/dim]",
-        border_style="cyan"
-    ))
-
-    if not target_company:
-        target_company = Prompt.ask("Enter company name to analyze", default="DHL Group")
-
-    console.print("\n[bold yellow]Select Intelligence Scenario to evaluate:[/bold yellow]")
-    console.print("  [bold green][1][/bold green] Agentic Automation & RPA Squads [dim](Strategy 2030, back-office overhead)[/dim]")
-    console.print("  [bold green][2][/bold green] Managed SOC & NIS2 Cyber Resilience [dim](Perimeter vulnerabilities, compliance)[/dim]")
-    console.print("  [bold green][3][/bold green] Cloud Legacy Modernization & AI Engineering [dim](AWS/Kubernetes architecture)[/dim]")
-    console.print("  [bold green][4][/bold green] Disqualification Stress-Test [dim](Tests insolvency / liquidation exclusion rules)[/dim]")
-    console.print("  [bold green][5][/bold green] Live News Ingestion [dim](Fetches live Google News RSS and extracts verbatim signals)[/dim]")
-    console.print("  [bold green][6][/bold green] Custom Document Text & Signal Question [dim](Paste custom text)[/dim]")
-
-    sc_choice = Prompt.ask("Choose scenario", choices=["1", "2", "3", "4", "5", "6"], default="1")
-
-    # Build scenario data
-    if sc_choice == "1":
-        passage = (
-            f"{target_company} announced the expansion of its Strategy 2030 digital roadmap, "
-            f"deploying agentic AI squads and RPA workflows to streamline logistics hub operations "
-            f"and reduce back-office administrative bottlenecks."
-        )
-        question = "Is the company deploying agentic process automation or RPA workflows?"
-        guidance = "Look for Strategy 2030, RPA, workflow automation, agentic AI, digital roadmap."
-        rules = [
-            {"id": "r1", "question": question, "weight": "HIGH", "is_negative": False},
-            {"id": "r2", "question": "Are they hiring software engineers?", "weight": "MEDIUM", "is_negative": False}
-        ]
-    elif sc_choice == "2":
-        passage = (
-            f"Facing imminent enforcement deadlines under the EU NIS2 Directive, {target_company} "
-            f"has initiated an urgent review of perimeter cybersecurity controls and critical infrastructure vulnerabilities."
-        )
-        question = "Is the company subject to NIS2 compliance deadlines or seeking Managed SOC capabilities?"
-        guidance = "Look for NIS2, DORA, cybersecurity audit, Managed SOC, perimeter vulnerability."
-        rules = [
-            {"id": "r1", "question": question, "weight": "HIGH", "is_negative": False},
-            {"id": "r2", "question": "Active critical vulnerabilities detected?", "weight": "MEDIUM", "is_negative": False}
-        ]
-    elif sc_choice == "3":
-        passage = (
-            f"In its latest technology disclosure, {target_company} detailed plans to migrate core legacy systems "
-            f"to AWS Cloud and Kubernetes clusters to accelerate software delivery cycles."
-        )
-        question = "Is the company actively migrating legacy platforms to modern cloud infrastructure?"
-        guidance = "Look for AWS, Azure, cloud migration, legacy modernization, Kubernetes."
-        rules = [
-            {"id": "r1", "question": question, "weight": "HIGH", "is_negative": False}
-        ]
-    elif sc_choice == "4":
-        passage = (
-            f"According to commercial court registry filings, {target_company} has entered preliminary insolvency proceedings "
-            f"and appointed an administrator to oversee debt restructuring."
-        )
-        question = "Is the company undergoing insolvency, bankruptcy, or debt liquidation?"
-        guidance = "Check for bankruptcy, insolvency administrator, liquidation proceedings."
-        rules = [
-            {"id": "r_disq", "question": question, "weight": "DISQUALIFY", "is_negative": True}
-        ]
-    elif sc_choice == "5":
-        console.print(f"[yellow]Fetching real-time public news for {target_company}...[/yellow]")
-        news_items = fetch_company_news(target_company, ["digital", "automation", "strategy", "expansion", "cloud"])
-        if news_items:
-            passage = f"{news_items[0]['title']}. {news_items[0]['snippet']}"
-            console.print(f"[dim]Harvested Article: {news_items[0]['title']}[/dim]")
-        else:
-            passage = f"{target_company} announced strategic operational investments in digital modernization and fleet efficiency."
-        question = f"Does the text indicate active transformation, expansion, or technology procurement at {target_company}?"
-        guidance = "Identify corporate investment, expansion, digital projects, or new contracts."
-        rules = [
-            {"id": "r_news", "question": question, "weight": "HIGH", "is_negative": False}
-        ]
-    else:
-        passage = Prompt.ask("Enter raw text passage")
-        question = Prompt.ask("Enter signal question to verify")
-        guidance = Prompt.ask("Enter guidance notes", default="Extract direct verbatim evidence.")
-        rules = [
-            {"id": "r_custom", "question": question, "weight": "HIGH", "is_negative": False}
-        ]
-
-    # -------------------------------------------------------------
-    # LAYER 1: GOOGLE AI STUDIO GEMINI SIGNAL EXTRACTION
-    # -------------------------------------------------------------
-    console.print(f"\n[bold cyan]>>> [Layer 1] Running Gemini Structured Extraction & Verbatim Assertion...[/bold cyan]")
-    with console.status("[bold green]Querying Gemini & verifying verbatim anti-hallucination guardrail...[/bold green]"):
-        l1_result = extract_signal_evidence(raw_passage=passage, question=question, guidance=guidance)
-
-    l1_panel = Text()
-    l1_panel.append(f"Question: {question}\n", style="bold white")
-    l1_panel.append("Signal Detected: ", style="bold white")
-    l1_panel.append(f"{'CONFIRMED' if l1_result['detected'] else 'NOT DETECTED'}\n", style="bold green" if l1_result['detected'] else "bold red")
-    l1_panel.append(f"Confidence: {l1_result['confidence']:.2f}\n", style="cyan")
-    if l1_result['evidence_quote']:
-        l1_panel.append(f'Verbatim Quote: "{l1_result["evidence_quote"]}"\n', style="italic yellow")
-        l1_panel.append("Anti-Hallucination Guardrail: [PASS] Verbatim match confirmed in source text\n", style="bold green")
-    else:
-        l1_panel.append("Evidence Quote: (None / Empty)\n", style="dim")
-    l1_panel.append(f"Reasoning: {l1_result['reasoning']}\n", style="dim white")
-    console.print(Panel(l1_panel, title="[bold]Layer 1: Grounded Evidence Extraction[/bold]", border_style="cyan"))
-
-    # -------------------------------------------------------------
-    # LAYER 2 & 3: COMPOSITE 3-LAYER SYNTHESIS (ANNEX 4.2 + HT-GNN)
-    # -------------------------------------------------------------
-    console.print(f"[bold magenta]>>> [Layer 2 & 3] Computing Annex 4.2 Deterministic Score & PyG HT-GNN Inference...[/bold magenta]")
-    
-    evaluations = [
-        {
-            "rule_id": rules[0]["id"],
-            "detected": l1_result["detected"],
-            "confidence": l1_result["confidence"],
-            "evidence_quote": l1_result["evidence_quote"],
-            "reasoning": l1_result["reasoning"],
-            "weight": rules[0]["weight"],
-            "is_negative": rules[0]["is_negative"],
-        }
-    ]
-
-    with console.status("[bold magenta]Running Graph Neural Message-Passing on multi-relational ecosystem...[/bold magenta]"):
-        composite = compute_composite_3layer_score(
-            company_name=target_company,
-            domain=f"{target_company.lower().replace(' ', '')}.com",
-            evaluations=evaluations,
-            rules=rules
-        )
-
-    # Layer 2 Breakdown
-    l2_table = Table(title="Layer 2: Annex 4.2 Deterministic Score Formula", box=box.ASCII, expand=True)
-    l2_table.add_column("Formula Component", style="bold white", ratio=3)
-    l2_table.add_column("Value / Status", style="bold cyan", ratio=3)
-    l2_table.add_column("Calculation Rule", style="italic dim", ratio=5)
-
-    l2_table.add_row("Signal Weight", str(rules[0]["weight"]), "HIGH=35 | MEDIUM=20 | LOW=10")
-    l2_table.add_row("Detection Confidence", f"{l1_result['confidence']:.2f}", "0.0 - 1.0 extraction confidence")
-    l2_table.add_row("Disqualification Status", "[bold red]DISQUALIFIED[/bold red]" if composite["is_disqualified"] else "[bold green]ELIGIBLE[/bold green]", "Triggered if weight=='DISQUALIFY' and C >= 0.80")
-    if composite["is_disqualified"]:
-        l2_table.add_row("Disqualification Reason", str(composite["disqualification_reason"]), "Outreach generation locked")
-    l2_table.add_row("Layer 2 Score (S_det)", f"{composite['deterministic_score']}/100", "Bounded in [0, 100]")
-    console.print(l2_table)
-
-    # Layer 3 Breakdown
-    l3_table = Table(title="Layer 3: PyG Heterogeneous Temporal Graph (HT-GNN)", box=box.ASCII, expand=True)
-    l3_table.add_column("Graph Relation", style="bold magenta", ratio=3)
-    l3_table.add_column("Ecosystem Ripple Attribution", style="white", ratio=8)
-
-    expl = composite.get("ecosystem_attribution", {})
-    comp_str = ", ".join([c["name"] for c in expl.get("competitors", [])[:3]]) or "Industry peer baseline"
-    tech_str = ", ".join(expl.get("technologies", [])[:4]) or "Standard enterprise infrastructure"
-    reg_str = ", ".join(expl.get("regulations", [])[:3]) or "Standard EU regulations"
-
-    l3_table.add_row("Competitor Contagion", comp_str)
-    l3_table.add_row("Enterprise Tech Stack", tech_str)
-    l3_table.add_row("Regulatory Pressures", reg_str)
-    l3_table.add_row("HT-GNN Score (S_graph)", f"{composite['graph_readiness_score']:.1f}/100")
-    console.print(l3_table)
-
-    # Final Composite Banner
-    final_score = composite["composite_score"]
-    score_style = "bold green" if final_score >= 70 else ("bold yellow" if final_score >= 45 else "bold red")
-    
-    synth_text = Text()
-    synth_text.append(f"Target Account: {composite['company_name']} ({composite['domain']})\n", style="bold white")
-    synth_text.append(f"Deterministic Score (70%): {composite['deterministic_score']}  |  Graph Score (30%): {composite['graph_readiness_score']:.1f}\n", style="dim")
-    synth_text.append("Final 3-Layer Composite Score: ", style="bold white")
-    synth_text.append(f"{final_score}/100\n", style=score_style)
-    if composite["is_disqualified"]:
-        synth_text.append(f"Status: DISQUALIFIED - {composite['disqualification_reason']}\n", style="bold red")
-    else:
-        synth_text.append(f"Status: {composite.get('tier') or 'Qualified Lead'}\n", style="bold cyan")
-        synth_text.append(f"Best Solution Fit: {composite.get('best_solution') or 'Enterprise Transformation'}\n", style="bold yellow")
-    
-    console.print(Panel(synth_text, title="[bold]Composite 3-Layer Hybrid Score Breakdown[/bold]", border_style="green" if not composite["is_disqualified"] else "red"))
-
-    if composite.get("grounded_pitch"):
-        console.print(Panel(composite["grounded_pitch"], title="[bold green]Executive Sales Pitch (Grounded in Layer 1-3)[/bold green]", border_style="green"))
-
-    # Human-in-the-loop Calibration
-    feedback_choice = Prompt.ask("\n[bold yellow]Record validation feedback for scoring calibration? (y/n)[/bold yellow]", choices=["y", "n"], default="y")
-    if feedback_choice == "y":
-        is_acc = Prompt.ask("Was this score assessment accurate?", choices=["y", "n"], default="y") == "y"
-        notes = Prompt.ask("Calibration notes (optional)", default="")
-        rec = record_lead_feedback(
-            lead_id=f"lead_{target_company.lower().replace(' ', '_')}",
-            is_accurate=is_acc,
-            notes=notes
-        )
-        console.print(f"[bold green][OK] Feedback successfully logged with ID: {rec['feedback_id']} (stored in data/lead_feedback.jsonl)[/bold green]")
-
 def interactive_menu():
     while True:
         console.print("\n" + "=" * 75)
@@ -546,11 +317,9 @@ def interactive_menu():
         console.print("  [bold green][3][/bold green] Explore Commercial Offerings & Intelligent Operational Wedges")
         console.print("  [bold green][4][/bold green] Test Individual Live Data Connectors (With Product Keywords)")
         console.print("  [bold green][5][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
-        console.print("  [bold green][6][/bold green] Run HT-GNN Graph Intelligence & Ecosystem Ripple Analysis")
-        console.print("  [bold green][7][/bold green] 3-Layer Hybrid Brain (Gemini LLM + Annex Formula + PyG HT-GNN)")
         console.print("  [bold red][0][/bold red] Exit")
 
-        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7"], default="1")
+        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5"], default="1")
 
         if choice == "0":
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
@@ -602,12 +371,6 @@ def interactive_menu():
             test_individual_connectors()
         elif choice == "5":
             export_last_result()
-        elif choice == "6":
-            comp_name = Prompt.ask("Enter company name for HT-GNN Graph Analysis", default="Knorr-Bremse")
-            render_gnn_prediction(comp_name)
-        elif choice == "7":
-            comp_name = Prompt.ask("Enter company name for 3-Layer Hybrid Brain Analysis", default="DHL Group")
-            render_3layer_hybrid_scoring(comp_name)
 
 def main():
     parser = argparse.ArgumentParser(description="Orange Systems Autonomous Customer Prospecting CLI")
@@ -629,14 +392,6 @@ def main():
     eval_parser.add_argument("--offering", required=False, default="commercial_bikes", help="Offering name (default: commercial_bikes)")
     eval_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
 
-    # Command: gnn
-    gnn_parser = subparsers.add_parser("gnn", help="Run HT-GNN graph neural prediction on an account")
-    gnn_parser.add_argument("--company", required=True, help="Company name (e.g. Knorr-Bremse, Siemens, Lufthansa Group)")
-
-    # Command: 3layer
-    layer3_parser = subparsers.add_parser("3layer", help="Run 3-Layer Hybrid Brain (Gemini + Annex 4.2 + PyG HT-GNN)")
-    layer3_parser.add_argument("--company", required=False, default="DHL Group", help="Company name (e.g. DHL Group, BASF, Siemens)")
-
     args = parser.parse_args()
 
     if args.command is None or args.command == "menu":
@@ -647,10 +402,6 @@ def main():
         prospect_and_render(args.offering)
     elif args.command == "evaluate":
         evaluate_single_account(args.company, args.offering, args.domain)
-    elif args.command == "gnn":
-        render_gnn_prediction(args.company)
-    elif args.command == "3layer":
-        render_3layer_hybrid_scoring(args.company)
 
 if __name__ == "__main__":
     main()
