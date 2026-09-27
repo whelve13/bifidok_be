@@ -28,6 +28,7 @@ from engine.offering_catalog import (
 )
 
 from connectors.ats import fetch_ats_hiring_signals
+from connectors.developer import fetch_developer_signals
 from connectors.financials import fetch_financial_signals
 from connectors.firmographics import resolve_company_entity
 from connectors.gdelt import fetch_gdelt_signals
@@ -89,8 +90,8 @@ class CustomerProspectingEngine:
             "name": resolved_entity.get("name", clean_input),
             "domain": resolved_entity.get("domain", f"{clean_input.lower().replace(' ', '')}.com"),
             "legal_name": resolved_entity.get("legal_name", clean_input),
-            "country": resolved_entity.get("country", "EU"),
-            "headcount": resolved_entity.get("headcount") or 15000,
+            "country": resolved_entity.get("country", "Global"),
+            "headcount": resolved_entity.get("headcount") or 2500,
             "sector": resolved_entity.get("sector") or "Industrial & Enterprise Operations",
             "ticker": resolved_entity.get("ticker"),
             "description": resolved_entity.get("description", "Enterprise operator."),
@@ -278,6 +279,28 @@ class CustomerProspectingEngine:
         except Exception:
             pass
 
+        # F. Developer Signals & In-House Engineering Capacity
+        try:
+            dev_res = fetch_developer_signals(company_name)
+            if dev_res.get("github_org_found"):
+                signals["github_repo_count"] = dev_res.get("repo_count", 0)
+                if dev_res.get("repo_count", 0) > 100:
+                    evidence_citations.append(
+                        ProspectEvidence(
+                            category="In-House Engineering Footprint",
+                            title=f"Extensive Developer Footprint ({dev_res.get('repo_count', 0)}+ Repositories)",
+                            snippet="Organization exhibits substantial internal software engineering capacity. Co-delivery and platform integration preferred over turnkey software outsourcing.",
+                            source="GitHub Public API & Developer Footprint",
+                            confidence=0.88,
+                            points_awarded=0.0,
+                        )
+                    )
+        except Exception:
+            pass
+
+        if comp_data.get("github_repos"):
+            signals["github_repo_count"] = max(signals.get("github_repo_count", 0), comp_data["github_repos"])
+
         # 3. Predict using Local ML Models
         ml_res = predict_lead_evaluation(
             company=comp_data,
@@ -312,11 +335,48 @@ class CustomerProspectingEngine:
                 )
             ]
 
-        # Use company operational context to pick the optimal wedge
-        if wedge_idx < len(wedges):
-            primary_wedge = wedges[wedge_idx]
-        else:
-            primary_wedge = wedges[0]
+        # Dynamic semantic commercial wedge alignment (no hardcoded 3-class bias)
+        context_text = (
+            f"{company_name} {comp_data.get('sector', '')} {comp_data.get('description', '')} "
+            f"{' '.join(signals.get('matched_roles', []))} "
+            f"{' '.join(signals.get('detected_tech', []))} "
+            f"{' '.join(str(k) for k, v in comp_data.get('operational_attributes', {}).items() if v)}"
+        ).lower()
+
+        scored_wedges = []
+        for idx, wedge in enumerate(wedges):
+            score = 0.0
+            w_text = f"{wedge.name} {wedge.target_archetype} {wedge.description} {wedge.value_driver}".lower()
+
+            # Cyber/Security alignment
+            if any(w in w_text for w in ["security", "soc", "cyber", "compliance", "threat", "nis2"]):
+                if any(s in context_text for s in ["soc", "security", "threat", "cisa", "ciso", "compliance"]) or signals.get("cisa_kev_count", 0) > 0:
+                    score += 35.0
+                if signals.get("security_grade") in ["C", "D", "F"] or len(signals.get("missing_headers", [])) > 1:
+                    score += 25.0
+
+            # Cloud/Modernization alignment
+            if any(w in w_text for w in ["cloud", "devops", "platform", "modernization", "infrastructure", "migration"]):
+                if any(s in context_text for s in ["cloud", "kubernetes", "devops", "sre", "platform", "azure", "aws", "gcp"]):
+                    score += 35.0
+                if signals.get("tech_stack_breadth", 0) >= 3.0 or signals.get("github_repo_count", 0) > 20:
+                    score += 20.0
+
+            # Automation/Workflow/Operations alignment
+            if any(w in w_text for w in ["automation", "agentic", "ai", "workflow", "process", "fleet", "logistics"]):
+                if any(s in context_text for s in ["rpa", "automation", "workflow", "fleet", "courier", "logistics", "delivery", "process"]):
+                    score += 35.0
+                if signals.get("has_enterprise_erp") or comp_data.get("operational_attributes", {}).get("urban_delivery_fleets"):
+                    score += 20.0
+
+            # Include slight ML prior if index matches
+            if idx == wedge_idx:
+                score += 15.0
+
+            scored_wedges.append((score, idx, wedge))
+
+        scored_wedges.sort(key=lambda x: x[0], reverse=True)
+        primary_wedge = scored_wedges[0][2]
 
         # Dynamic buying committee personas aligned with offering (CIO, CISO, CFO)
         off_title_low = resolved_offering.title.lower()
@@ -385,15 +445,24 @@ class CustomerProspectingEngine:
                 ),
             ]
 
-        # Estimated commercial scope
+        # Adaptive commercial scope across 5 scale tiers (SMB to Global Enterprise)
         raw_headcount = comp_data.get("headcount")
-        headcount = raw_headcount or 500
-        if headcount >= 50000:
-            estimated_scope = "€1.5M - €5.0M Enterprise-Wide Digital Transformation & Co-Delivery"
-        elif headcount >= 5000:
-            estimated_scope = "€400K - €1.2M Multi-Departmental Production Rollout"
+        headcount = raw_headcount or 2500
+        github_repos_count = signals.get("github_repo_count", 0)
+
+        # Big Tech / Hyperscaler In-House Build Reality check
+        if github_repos_count > 300:
+            estimated_scope = "€150K - €450K Specialized Co-Innovation Pilot (High In-House Build Capacity)"
+        elif headcount >= 50000:
+            estimated_scope = "€2.0M - €7.5M Global Enterprise Modernization & Co-Delivery"
+        elif headcount >= 10000:
+            estimated_scope = "€750K - €2.5M Large Enterprise Multi-Division Deployment"
+        elif headcount >= 2500:
+            estimated_scope = "€300K - €900K Upper Mid-Market Departmental Acceleration"
+        elif headcount >= 500:
+            estimated_scope = "€100K - €350K Mid-Market Strategic Production Rollout"
         else:
-            estimated_scope = "€100K - €350K Targeted Strategic Pilot & Architecture Assessment"
+            estimated_scope = "€35K - €100K Targeted Production Pilot & Architecture Sprint"
 
         # Rationale and grounded pitch with verbatim evidence citations
         scale_text = f" and organizational scale ({headcount:,} employees)" if raw_headcount else ""
@@ -401,10 +470,27 @@ class CustomerProspectingEngine:
         if evidence_citations:
             top_evidence_titles = [f"  - [{e.category}] {e.title}: \"{e.snippet}\"" for e in evidence_citations[:3]]
             citations_summary = "\n\nVerified Public Signals & Catalysts:\n" + "\n".join(top_evidence_titles)
+
+        # Orange Systems Strategic Potential ROI & Outsource Propensity analysis
+        if github_repos_count > 150:
+            roi_strategic_note = (
+                f" In-House Build Factor: {company_name} maintains a massive internal developer footprint ({github_repos_count}+ public repos), "
+                f"creating high resistance to general IT outsourcing; commercial engagements should target specialized co-delivery rather than generic staff augmentation."
+            )
+        elif 250 <= headcount <= 35000:
+            roi_strategic_note = (
+                f" High Potential ROI for Orange Systems: Mid-Market / Upper Mid-Market scale ({headcount:,} employees) in {comp_data.get('sector', 'Enterprise')} "
+                f"represents optimal outsourcing propensity with rapid procurement velocity and high customer lifetime value."
+            )
+        else:
+            roi_strategic_note = (
+                f" Strategic Vertical Expansion: Accelerates Orange Systems' capability to scale into the {comp_data.get('sector', 'Enterprise')} vertical market."
+            )
+
         operational_rationale = (
             f"{company_name} exhibits ideal enterprise characteristics for {resolved_offering.title}: "
             f"{primary_wedge.name} provides immediate operational synergy with their {comp_data.get('sector', 'Enterprise')} footprint, "
-            f"supported by verified live buying signals{scale_text}."
+            f"supported by verified live buying signals{scale_text}.{roi_strategic_note}"
         )
 
         pitch = (
