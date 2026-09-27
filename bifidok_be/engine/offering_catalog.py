@@ -303,8 +303,8 @@ class DynamicOfferingCatalog(dict):
 
 def create_flagship_catalog() -> DynamicOfferingCatalog:
     cat = DynamicOfferingCatalog()
-    # Pre-populate core Orange Systems IT offerings so catalog listings and .items() work out of the box
-    for k in ["agentic_automation", "managed_soc", "cloud_modernization"]:
+    # Pre-populate core Orange Systems IT and commercial offerings
+    for k in ["agentic_automation", "managed_soc", "cloud_modernization", "commercial_bikes"]:
         _ = cat[k]
     return cat
 

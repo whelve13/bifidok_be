@@ -16,7 +16,7 @@ try:
     from api.routes_config import router as config_router
     from api.routes_leads import router as leads_router
     from api.routes_outreach import router as outreach_router
-    from db.schema import Company
+    from db.schema import Company, LeadScore
     from db.seed import seed_database
     from db.session import SessionLocal
     from services.diagnostics import run_preflight_checks
@@ -25,7 +25,7 @@ except ImportError:
     from bifidok_be.api.routes_config import router as config_router
     from bifidok_be.api.routes_leads import router as leads_router
     from bifidok_be.api.routes_outreach import router as outreach_router
-    from bifidok_be.db.schema import Company
+    from bifidok_be.db.schema import Company, LeadScore
     from bifidok_be.db.seed import seed_database
     from bifidok_be.db.session import SessionLocal
     from bifidok_be.services.diagnostics import run_preflight_checks
@@ -35,13 +35,14 @@ except ImportError:
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler. Automatically seeds database with canonical
-    benchmark entities on cold-start if database is empty.
+    benchmark entities on cold-start if database has insufficient lead scores.
     """
     try:
         session = SessionLocal()
         try:
-            if session.query(Company).count() == 0:
-                logger.info("Database empty on startup. Automatically seeding canonical datasets...")
+            score_count = session.query(LeadScore).count()
+            if score_count < 15:
+                logger.info("Database has %s lead scores. Automatically seeding canonical datasets...", score_count)
                 seed_database(session)
                 logger.info("Canonical database seeding completed successfully.")
         finally:
