@@ -8,8 +8,10 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 import requests
-
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
 
 
 def is_official_contract_award(link: str, title: str) -> bool:
@@ -76,7 +78,7 @@ def fetch_public_procurement_tenders(
 
         encoded = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=en-GB&gl=GB"
-        resp = requests.get(url, headers=HEADERS, timeout=4)
+        resp = resilient_get(url, requests_get_fn=requests.get, timeout=6)
 
         if resp.status_code == 200:
             root = ET.fromstring(resp.content)

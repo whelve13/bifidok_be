@@ -5,9 +5,14 @@ from typing import Dict, Any, Optional, List
 import yfinance as yf
 from services.cache import get_cache, set_cache
 
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
+
 logger = logging.getLogger(__name__)
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
 
 def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
@@ -25,6 +30,8 @@ def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
         "sga_margin_pressure": False,
         "evidence": [],
     }
+
+    session = get_resilient_session()
 
     # Step 1: Resolve Ticker via Yahoo Finance Search API (Row 6)
     search_cache_key = f"cache:yahoo_search:{company_name.strip().lower()}"
@@ -48,7 +55,7 @@ def fetch_financial_signals(company_name: str) -> Dict[str, Any]:
         for q in queries_to_try:
             try:
                 search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={requests.utils.quote(q)}&quotesCount=5"
-                resp = requests.get(search_url, headers=HEADERS, timeout=5)
+                resp = resilient_get(search_url, headers=HEADERS, requests_get_fn=requests.get, session=session, timeout=5)
                 if resp.status_code == 200:
                     search_data = resp.json()
                     curr_quotes = search_data.get("quotes", [])

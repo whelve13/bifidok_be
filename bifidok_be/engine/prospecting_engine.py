@@ -90,12 +90,12 @@ class CustomerProspectingEngine:
             "domain": resolved_entity.get("domain", f"{clean_input.lower().replace(' ', '')}.com"),
             "legal_name": resolved_entity.get("legal_name", clean_input),
             "country": resolved_entity.get("country", "EU"),
-            "headcount": 15000,
-            "sector": "Industrial & Enterprise Operations",
-            "ticker": None,
+            "headcount": resolved_entity.get("headcount") or 15000,
+            "sector": resolved_entity.get("sector") or "Industrial & Enterprise Operations",
+            "ticker": resolved_entity.get("ticker"),
             "description": resolved_entity.get("description", "Enterprise operator."),
             "is_solvent": True,
-            "operational_attributes": {},
+            "operational_attributes": dict(resolved_entity.get("operational_attributes", {})),
         }
 
         # Dynamic operational attribute and profile inference
@@ -386,7 +386,8 @@ class CustomerProspectingEngine:
             ]
 
         # Estimated commercial scope
-        headcount = comp_data.get("headcount", 500)
+        raw_headcount = comp_data.get("headcount")
+        headcount = raw_headcount or 500
         if headcount >= 50000:
             estimated_scope = "€1.5M - €5.0M Enterprise-Wide Digital Transformation & Co-Delivery"
         elif headcount >= 5000:
@@ -395,15 +396,15 @@ class CustomerProspectingEngine:
             estimated_scope = "€100K - €350K Targeted Strategic Pilot & Architecture Assessment"
 
         # Rationale and grounded pitch with verbatim evidence citations
+        scale_text = f" and organizational scale ({headcount:,} employees)" if raw_headcount else ""
         citations_summary = ""
         if evidence_citations:
             top_evidence_titles = [f"  - [{e.category}] {e.title}: \"{e.snippet}\"" for e in evidence_citations[:3]]
             citations_summary = "\n\nVerified Public Signals & Catalysts:\n" + "\n".join(top_evidence_titles)
-
         operational_rationale = (
             f"{company_name} exhibits ideal enterprise characteristics for {resolved_offering.title}: "
             f"{primary_wedge.name} provides immediate operational synergy with their {comp_data.get('sector', 'Enterprise')} footprint, "
-            f"supported by verified live buying signals and organizational scale ({headcount:,} employees)."
+            f"supported by verified live buying signals{scale_text}."
         )
 
         pitch = (

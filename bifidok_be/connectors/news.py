@@ -3,14 +3,20 @@ import xml.etree.ElementTree as ET
 import requests
 from typing import List, Dict, Any
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+try:
+    from services.proxy_manager import get_resilient_session
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session
+
 
 def fetch_company_news(company_name: str, custom_keywords: List[str] = None) -> List[Dict[str, Any]]:
     """
-    Fetches real-time European business news and strategic announcements from Google News RSS feeds.
-    (Rows 15, 16 of data_api_endpoints.xlsx)
+    Fetches real-time European business news and strategic announcements.
+    Queries Google News RSS with proxy support, and seamlessly integrates the open
+    GDELT 2.0 API to guarantee cloud datacenter delivery without bot blocks.
     """
     news_items = []
+    session = get_resilient_session()
     
     # Target search queries for sales triggers
     if custom_keywords and len(custom_keywords) > 0:
@@ -29,7 +35,7 @@ def fetch_company_news(company_name: str, custom_keywords: List[str] = None) -> 
         try:
             encoded_query = urllib.parse.quote(q)
             rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-GB&gl=GB"
-            resp = requests.get(rss_url, headers=HEADERS, timeout=5)
+            resp = session.get(rss_url, timeout=5)
             if resp.status_code == 200:
                 root = ET.fromstring(resp.content)
                 for item in root.findall(".//item")[:5]:
@@ -49,6 +55,21 @@ def fetch_company_news(company_name: str, custom_keywords: List[str] = None) -> 
                         "title": title,
                         "pubDate": pubdate,
                         "link": link
+                    })
+        except Exception:
+            pass
+
+    # If Google News RSS was throttled or returned zero items, query open GDELT 2.0 API
+    if not news_items:
+        try:
+            from connectors.gdelt import fetch_gdelt_signals
+            gdelt_articles = fetch_gdelt_signals(company_name, custom_keywords)
+            for art in gdelt_articles:
+                if not any(n["title"] == art["title"] for n in news_items):
+                    news_items.append({
+                        "title": art["title"],
+                        "pubDate": art.get("seendate", ""),
+                        "link": art.get("url", ""),
                     })
         except Exception:
             pass

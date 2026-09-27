@@ -4,9 +4,15 @@ import requests
 from typing import Dict, Any, Optional
 from services.cache import get_cache, set_cache
 
+try:
+    from services.proxy_manager import get_resilient_session, resilient_get
+except ImportError:
+    from bifidok_be.services.proxy_manager import get_resilient_session, resilient_get
+
 logger = logging.getLogger(__name__)
 
-HEADERS = {"User-Agent": "EnterpriseSalesProspectingScout/1.0 (contact@sales-intelligence.internal)"}
+WIKI_USER_AGENT = "OrangeSystemsSalesIntelligence/1.0 (compliance@orangesystems.eu; European Market Intel)"
+HEADERS = {"User-Agent": WIKI_USER_AGENT}
 
 
 def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None) -> Dict[str, Any]:
@@ -21,6 +27,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
         "description": "",
         "country": "EU",
     }
+    session = get_resilient_session(user_agent=WIKI_USER_AGENT)
 
     # Clean stripped base for queries
     slug_base = re.sub(
@@ -44,7 +51,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
                     continue
                 try:
                     url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={q}"
-                    resp = requests.get(url, headers=HEADERS, timeout=4)
+                    resp = resilient_get(url, headers=HEADERS, requests_get_fn=requests.get, session=session, timeout=4)
                     if resp.status_code == 200 and resp.json():
                         data = resp.json()
                         set_cache(clearbit_cache_key, data, ttl=86400)
@@ -82,7 +89,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
             break
         try:
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{cand}"
-            resp = requests.get(url, headers=HEADERS, timeout=4)
+            resp = resilient_get(url, headers=HEADERS, requests_get_fn=requests.get, session=session, timeout=4)
             if resp.status_code == 200:
                 wdata = resp.json()
                 set_cache(wiki_cache_key, wdata, ttl=86400)
