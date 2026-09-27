@@ -25,7 +25,7 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
         "domain": domain_hint or "",
         "legal_name": company_name,
         "description": "",
-        "country": "EU",
+        "country": "Global",
     }
     session = get_resilient_session(user_agent=WIKI_USER_AGENT)
 
@@ -101,5 +101,40 @@ def resolve_company_entity(company_name: str, domain_hint: Optional[str] = None)
         resolved["description"] = wdata.get("extract", "")
         resolved["short_description"] = wdata.get("description", "")
         resolved["legal_name"] = wdata.get("title", resolved["name"])
+
+    # Dynamic country resolution from domain TLD
+    dom = (resolved.get("domain") or "").lower()
+    tld_map = {
+        ".de": "DE", ".uk": "UK", ".co.uk": "UK", ".fr": "FR", ".nl": "NL",
+        ".ch": "CH", ".se": "SE", ".it": "IT", ".es": "ES", ".ca": "CA",
+        ".au": "AU", ".jp": "JP", ".kr": "KR", ".in": "IN", ".sg": "SG",
+        ".at": "AT", ".dk": "DK", ".fi": "FI", ".ie": "IE", ".us": "US",
+    }
+    for tld, c_code in tld_map.items():
+        if dom.endswith(tld):
+            resolved["country"] = c_code
+            break
+
+    # Dynamic country resolution from summary text if still Global
+    if resolved["country"] == "Global":
+        text_corpus = f"{resolved.get('description', '')} {resolved.get('short_description', '')}".lower()
+        if any(w in text_corpus for w in ["american", "united states", "headquartered in new york", "california", "texas", "washington"]):
+            resolved["country"] = "US"
+        elif any(w in text_corpus for w in ["british", "united kingdom", "london", "england", "scotland"]):
+            resolved["country"] = "UK"
+        elif any(w in text_corpus for w in ["german", "germany", "munich", "berlin", "frankfurt"]):
+            resolved["country"] = "DE"
+        elif any(w in text_corpus for w in ["french", "france", "paris"]):
+            resolved["country"] = "FR"
+        elif any(w in text_corpus for w in ["japanese", "japan", "tokyo"]):
+            resolved["country"] = "JP"
+        elif any(w in text_corpus for w in ["swiss", "switzerland", "zurich", "geneva", "basel"]):
+            resolved["country"] = "CH"
+        elif any(w in text_corpus for w in ["dutch", "netherlands", "amsterdam"]):
+            resolved["country"] = "NL"
+        elif any(w in text_corpus for w in ["swedish", "sweden", "stockholm"]):
+            resolved["country"] = "SE"
+        elif any(w in text_corpus for w in ["australian", "australia", "sydney", "melbourne"]):
+            resolved["country"] = "AU"
 
     return resolved

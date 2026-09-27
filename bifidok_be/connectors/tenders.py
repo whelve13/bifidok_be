@@ -16,15 +16,28 @@ except ImportError:
 
 def is_official_contract_award(link: str, title: str) -> bool:
     """
-    Determines whether a notice originates from an official European procurement
-    registry (e.g. TED) or contains an official contract award identification.
+    Determines whether a notice originates from an official public procurement
+    registry (e.g. EU TED, US SAM.gov, UK Contracts Finder) or contains an official contract award identification.
     """
     if not link and not title:
         return False
 
     link_lower = (link or "").lower()
-    # Official European TED domains
-    if any(domain in link_lower for domain in ["ted.europa.eu", "simap.ted.europa.eu"]):
+    # Official Public Procurement Domains (EU, US, UK, Global)
+    official_domains = [
+        "ted.europa.eu",
+        "simap.ted.europa.eu",
+        "sam.gov",
+        "fbo.gov",
+        "fpds.gov",
+        "acquisition.gov",
+        "contractsfinder.service.gov.uk",
+        "find-tender.service.gov.uk",
+        "buyandsell.gc.ca",
+        "canadabuys.canada.ca",
+        "tenders.gov.au",
+    ]
+    if any(domain in link_lower for domain in official_domains):
         return True
 
     title_lower = (title or "").lower()
@@ -32,9 +45,9 @@ def is_official_contract_award(link: str, title: str) -> bool:
     if re.search(r"\b202\d/S\s+\d{3}-\d{6}\b", title, re.IGNORECASE) or re.search(r"\b\d{6}-202\d\b", title):
         return True
 
-    # Explicit contract award identification regex
+    # International contract award and solicitation identification regex
     if re.search(
-        r"\b(contract award id|award notice no|ted notice|procurement id)[:\s]+[a-z0-9\-_/]+",
+        r"\b(contract award id|award notice no|ted notice|procurement id|solicitation no|contract award #|rfp award)[:\s]+[a-z0-9\-_/]+",
         title_lower,
     ):
         return True

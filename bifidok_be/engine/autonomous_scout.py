@@ -207,6 +207,28 @@ EUROPEAN_ENTERPRISE_INDEX: List[Dict[str, Any]] = [
     {"name": "Philips NV", "sector": "Health Technology", "country": "NL", "keywords": ["healthtech", "medical", "devices", "cloud", "software", "healthcare", "ai"]},
 ]
 
+try:
+    from data.global_enterprise_universe import GLOBAL_ENTERPRISE_UNIVERSE
+    GLOBAL_ENTERPRISE_INDEX = []
+    for g in GLOBAL_ENTERPRISE_UNIVERSE:
+        if g.get("is_solvent", True):
+            GLOBAL_ENTERPRISE_INDEX.append({
+                "name": g["name"],
+                "sector": g.get("sector", "Enterprise"),
+                "country": g.get("country", "Global"),
+                "domain": g.get("domain", ""),
+                "keywords": [w.lower() for w in g.get("ats_roles", []) + [g.get("sector", ""), g["name"]]],
+            })
+    # Merge with European Enterprise Index
+    for e in EUROPEAN_ENTERPRISE_INDEX:
+        if not any(g["name"] == e["name"] for g in GLOBAL_ENTERPRISE_INDEX):
+            GLOBAL_ENTERPRISE_INDEX.append(e)
+except Exception:
+    GLOBAL_ENTERPRISE_INDEX = EUROPEAN_ENTERPRISE_INDEX
+
+# Alias for backward compatibility
+EUROPEAN_ENTERPRISE_INDEX = GLOBAL_ENTERPRISE_INDEX
+
 
 def discover_candidate_universe(
     offering_mandate: str,
@@ -215,44 +237,78 @@ def discover_candidate_universe(
 ) -> List[Dict[str, Any]]:
     """
     Autonomous prospecting scout: discovers real target companies on the fly
-    matching the commercial offering mandate via multi-source discovery:
-    1. European Enterprise Index (sector & keyword matched)
-    2. Wikipedia category members
-    3. Direct Wikipedia entity search
+    matching the commercial offering mandate via multi-source global discovery:
+    1. For custom offerings: live Wikipedia category & entity search first for exact niche companies.
+    2. Curated Global Enterprise Index for high-confidence domain matches.
+    3. Seamless multi-source deduplication.
     """
     query_info = derive_discovery_queries(offering_mandate)
     tokens = query_info.get("registry_terms", [])
     lowered_mandate = (offering_mandate or "").lower()
 
+    # Determine if mandate is one of the 3 flagship IT categories or a custom product/service
+    is_flagship = any(
+        f in lowered_mandate
+        for f in ["agentic", "automation", "managed soc", "soc & nis2", "cloud architecture", "cloud modernization"]
+    )
+
     discovered_names: List[str] = []
     discovered_items: List[Dict[str, Any]] = []
 
-    # 1. Match from Curated European Enterprise Index first (high reliability & verified solvency)
-    for entry in EUROPEAN_ENTERPRISE_INDEX:
-        name = entry["name"]
-        keywords = entry.get("keywords", [])
-        sector = entry.get("sector", "")
+    # A. For CUSTOM commercial offerings, query live Wikipedia categories and entity search FIRST
+    if not is_flagship and tokens:
+        # 1. Direct Wikipedia entity search with domain tokens
+        search_kw = " ".join(tokens[:2]) + " companies"
+        search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count)
+        for h in search_hits:
+            if h["name"] not in discovered_names:
+                discovered_names.append(h["name"])
+                discovered_items.append(h)
+            if len(discovered_names) >= target_count:
+                break
 
-        score = 0
-        if any(t in lowered_mandate for t in keywords):
-            score += 2
-        if any(t in sector.lower() for t in tokens):
-            score += 1
-        if any(kw in lowered_mandate for kw in ["all", "enterprise", "general"]):
-            score += 1
+        # 2. Query dynamically discovered Wikipedia categories
+        if len(discovered_names) < target_count:
+            for cat in query_info["categories"]:
+                if len(discovered_names) >= target_count:
+                    break
+                members = discover_companies_via_wikipedia(cat, max_results=target_count)
+                for m in members:
+                    if m["name"] not in discovered_names:
+                        discovered_names.append(m["name"])
+                        discovered_items.append(m)
+                    if len(discovered_names) >= target_count:
+                        break
 
-        if score > 0 and name not in discovered_names:
-            discovered_names.append(name)
-            discovered_items.append({
-                "name": name,
-                "source": f"European Index:{sector}",
-                "country": entry.get("country", "EU"),
-                "sector": sector,
-            })
-        if len(discovered_names) >= target_count:
-            break
+    # B. Match from Curated Global Enterprise Index (for flagship offerings or domain-matched supplement)
+    if len(discovered_names) < target_count:
+        for entry in GLOBAL_ENTERPRISE_INDEX:
+            name = entry["name"]
+            keywords = entry.get("keywords", [])
+            sector = entry.get("sector", "")
 
-    # 2. Query dynamically discovered categories from Wikipedia
+            score = 0
+            # Require exact non-generic domain keyword matches
+            matched_kws = [t for t in keywords if t in lowered_mandate and t not in COMMON_STOP_WORDS]
+            if matched_kws:
+                score += len(matched_kws) * 2
+            if any(t in sector.lower() for t in tokens if t not in COMMON_STOP_WORDS):
+                score += 1
+
+            # Only accept high-confidence domain fit (score >= 2)
+            if score >= 2 and name not in discovered_names:
+                discovered_names.append(name)
+                discovered_items.append({
+                    "name": name,
+                    "source": f"Global Index:{sector}",
+                    "country": entry.get("country", "Global"),
+                    "sector": sector,
+                    "domain": entry.get("domain", ""),
+                })
+            if len(discovered_names) >= target_count:
+                break
+
+    # C. Supplement with Wikipedia categories if flagship offering needs more candidates
     if len(discovered_names) < target_count:
         for cat in query_info["categories"]:
             if len(discovered_names) >= target_count:
@@ -265,10 +321,10 @@ def discover_candidate_universe(
                 if len(discovered_names) >= target_count:
                     break
 
-    # 3. Supplement with direct Wikipedia entity search if more targets needed
+    # D. Final fallback to entity search if still below target
     if len(discovered_names) < target_count and tokens:
-        search_kw = " ".join(tokens[:3]) + " enterprise company corporation"
-        search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count * 2)
+        search_kw = " ".join(tokens[:2]) + " enterprise corporation"
+        search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count)
         for h in search_hits:
             if h["name"] not in discovered_names:
                 discovered_names.append(h["name"])

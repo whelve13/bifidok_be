@@ -1,12 +1,12 @@
 {
-  "trained_at": "2026-09-27T06:33:09.964941+00:00",
+  "trained_at": "2026-09-27T07:47:33.080488+00:00",
   "training_data_source": "data/historical_market_dataset.jsonl",
-  "dataset_episodes_count": 4800,
+  "dataset_episodes_count": 480,
   "metrics": {
     "disqualification_accuracy": 1.0,
-    "propensity_regressor_mae": 0.6661,
-    "propensity_regressor_r2": 0.9991,
-    "wedge_classifier_macro_f1": 0.9211
+    "propensity_regressor_mae": 1.0528,
+    "propensity_regressor_r2": 0.9972,
+    "wedge_classifier_macro_f1": 0.6792
   },
   "feature_importances": {
     "semantic_relevance": 0.22,

@@ -843,50 +843,59 @@ REAL_ENTERPRISE_MARKET_UNIVERSE: List[Dict[str, Any]] = [
 ]
 
 try:
-    from .expanded_enterprises import ADDITIONAL_EUROPEAN_ENTERPRISES
-    REAL_ENTERPRISE_MARKET_UNIVERSE = REAL_ENTERPRISE_MARKET_UNIVERSE + ADDITIONAL_EUROPEAN_ENTERPRISES
+    from .global_enterprise_universe import GLOBAL_ENTERPRISE_UNIVERSE
+    REAL_ENTERPRISE_MARKET_UNIVERSE = GLOBAL_ENTERPRISE_UNIVERSE
 except ImportError:
     try:
-        from data.expanded_enterprises import ADDITIONAL_EUROPEAN_ENTERPRISES
-        REAL_ENTERPRISE_MARKET_UNIVERSE = REAL_ENTERPRISE_MARKET_UNIVERSE + ADDITIONAL_EUROPEAN_ENTERPRISES
+        from data.global_enterprise_universe import GLOBAL_ENTERPRISE_UNIVERSE
+        REAL_ENTERPRISE_MARKET_UNIVERSE = GLOBAL_ENTERPRISE_UNIVERSE
     except Exception:
-        pass
+        try:
+            from .expanded_enterprises import ADDITIONAL_EUROPEAN_ENTERPRISES
+            REAL_ENTERPRISE_MARKET_UNIVERSE = REAL_ENTERPRISE_MARKET_UNIVERSE + ADDITIONAL_EUROPEAN_ENTERPRISES
+        except Exception:
+            pass
 
 
 def build_and_save_historical_market_dataset(days: int = 90) -> List[Dict[str, Any]]:
     """
     Saves the real enterprise market dataset with historical outcomes to disk,
     calibrated to the specified historical time horizon in days.
+
+    Production-Level Integrity:
+    - Zero synthetic duplicates: every record represents a distinct real company.
+    - Zero synthetic drift: no artificial mathematical degradation factors.
+    - Global coverage: US, UK, European, and Asia-Pacific enterprises.
     """
     from datetime import datetime, timezone
     now_iso = datetime.now(timezone.utc).isoformat()
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # Determine temporal depth based on days (supports 1 to 24 monthly observation windows)
-    windows_count = max(1, min(24, int(days // 30)))
     compiled_records = []
+    seen_names = set()
 
-    for window_idx in range(windows_count):
-        decay_factor = 1.0 - (window_idx * 0.04)  # slight historical drift for older observation windows
-        for base in REAL_ENTERPRISE_MARKET_UNIVERSE:
-            rec = dict(base)
-            rec["data_window_days"] = days
-            rec["harvested_at"] = now_iso
-            rec["observation_window_idx"] = window_idx
+    for base in REAL_ENTERPRISE_MARKET_UNIVERSE:
+        name = base.get("name", "").strip()
+        if not name or name.lower() in seen_names:
+            continue
+        seen_names.add(name.lower())
 
-            # Apply realistic temporal signal adjustments across older windows
-            if window_idx > 0 and rec.get("ground_truth_disqualified") == 0:
-                rec["operating_margin"] = round(float(rec.get("operating_margin", 0.08)) * decay_factor, 4)
-                rec["semantic_relevance"] = round(min(1.0, float(rec.get("semantic_relevance", 0.8)) * (0.97 ** window_idx)), 3)
-                rec["ground_truth_propensity"] = round(float(rec.get("ground_truth_propensity", 50.0)) * (0.98 ** window_idx), 1)
+        rec = dict(base)
+        rec["data_window_days"] = days
+        rec["harvested_at"] = now_iso
 
-            compiled_records.append(rec)
+        # Tender & catalyst calibration based on days lookback horizon
+        if days < 60 and not rec.get("has_official_ted_award"):
+            # Shorter lookback horizon filters older general notices
+            rec["has_active_tender"] = False
+
+        compiled_records.append(rec)
 
     with open(HISTORICAL_DATASET_PATH, "w", encoding="utf-8") as f:
         for record in compiled_records:
             f.write(json.dumps(record) + "\n")
 
-    logger.info("Saved %d historical market records (window: %d days) to %s", len(compiled_records), days, HISTORICAL_DATASET_PATH)
+    logger.info("Saved %d distinct historical market records (window: %d days) to %s", len(compiled_records), days, HISTORICAL_DATASET_PATH)
     return compiled_records
 
 
@@ -942,8 +951,8 @@ def extract_feature_matrix_from_historical_data(
         mismatch = float(item.get("requires_physical_mismatch", 0.0))
         sector_align = float(item.get("sector_alignment_score", 1.0))
         tech_breadth = float(item.get("tech_stack_breadth", 3.0))
-        has_erp = float(item.get("has_enterprise_erp", 1.0 if item.get("primary_wedge") == 0 else 0.0))
-        has_leadership = float(item.get("has_leadership_catalyst", 1.0 if item.get("has_news_signals") else 0.0))
+        has_erp = float(item.get("has_enterprise_erp", 0.0))
+        has_leadership = float(item.get("has_leadership_catalyst", 0.0))
         hiring_vel = float(item.get("hiring_velocity_score", min(1.0, ats_count * 0.25)))
 
         vec = [
@@ -971,14 +980,27 @@ def extract_feature_matrix_from_historical_data(
         if disq == 1 or is_solvent == 0.0 or mismatch == 1.0:
             calibrated_prop = 0.0
         else:
-            # Serious Weights formulation (headcount capped at 4.0 pts max - no courier inflation)
-            fit = 15.0 + (semantic_rel * 16.0) + (sector_align * 3.0) + (has_erp * 3.0)
-            procurement = (has_tender * 15.0) + (has_ted * 7.0) + (has_leadership * 5.0) + (has_news * 4.0)
-            hiring = (hiring_vel * 10.0) + min(6.0, ats_count * 2.0) + (3.0 if ats_count > 0 else 0.0)
-            headcount_cap = min(4.0, max(1.0, headcount_log * 0.7))
-            margin_pts = min(6.0, max(2.0, op_margin * 35.0))
-            erp_pts = 5.0 if has_erp > 0 else 3.0
-            scale = margin_pts + erp_pts + headcount_cap
+            # Operational Fit with Vertical Expansion Bonus & In-House Engineering Resistance Penalty
+            # Target non-tech verticals (Logistics, Healthcare, Manufacturing, Energy, Finance, Retail) enable Orange Systems to scale
+            vertical_expansion_bonus = 4.0 if (sector_align >= 0.8 and github_repos < 250) else 0.0
+
+            # In-House Engineering Resistance Penalty: Hyperscalers/Big Tech build internally and resist external IT service procurement
+            in_house_penalty = min(22.0, (math.log10(max(1.0, github_repos)) - 1.7) * 14.0) if github_repos > 100 else 0.0
+            fit = max(5.0, 12.0 + (semantic_rel * 16.0) + (sector_align * 3.0) + (has_erp * 2.0) + vertical_expansion_bonus - in_house_penalty)
+
+            # Timing Urgency
+            procurement = (has_tender * 14.0) + (has_ted * 7.0) + (has_leadership * 5.0) + (has_news * 4.0)
+
+            # Hiring Intent & Technical Delivery Capacity
+            hiring = (hiring_vel * 9.0) + min(5.0, ats_count * 1.5) + (2.5 if ats_count > 0 else 0.0)
+
+            # Purchasing Scale & Outsource Propensity Sweet Spot (Max 15.0)
+            # Headcount capped to eliminate courier/warehouse inflation; Mid-Market (250-35k employees) yields highest Orange Systems ROI
+            headcount_cap = min(3.5, max(1.0, headcount_log * 0.6))
+            margin_pts = min(5.0, max(1.5, op_margin * 30.0))
+            erp_pts = 3.5 if has_erp > 0 else 2.5
+            roi_sweet_spot = 3.0 if (2.4 <= headcount_log <= 4.55) else (2.5 if headcount_log > 4.55 else 1.5)
+            scale = min(15.0, margin_pts + erp_pts + headcount_cap + roi_sweet_spot)
 
             calibrated_prop = round(float(np.clip(fit + procurement + hiring + scale, 10.0, 96.0)), 1)
 
