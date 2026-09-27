@@ -127,7 +127,10 @@ def search_companies_via_wikipedia(search_term: str, max_results: int = 10) -> L
                 if title.startswith(("List of", "Template:", "Category:", "Portal:", "Wikipedia:", "File:")):
                     continue
                 if any(ind in snippet or ind in t_lower for ind in company_hints):
-                    clean_title = re.sub(r"\s*\([^)]*\)", "", title).strip()
+                    if any(hint in title.lower() for hint in ["(company)", "(food)", "(brand)", "(business)"]):
+                        clean_title = title.strip()
+                    else:
+                        clean_title = re.sub(r"\s*\([^)]*\)", "", title).strip()
                     if clean_title:
                         results.append({"name": clean_title, "source": f"Wikipedia:Search:{search_term}"})
                 if len(results) >= max_results:
@@ -262,7 +265,7 @@ def discover_candidate_universe(
     # A. Match from Curated Global Enterprise Index first for high-confidence domain fit
     for entry in GLOBAL_ENTERPRISE_INDEX:
         name = entry["name"]
-        keywords = entry.get("keywords", [])
+        keywords = [k for k in entry.get("keywords", []) if k and len(k) >= 3]
         sector = entry.get("sector", "")
 
         score = 0
@@ -270,7 +273,7 @@ def discover_candidate_universe(
         matched_kws = [t for t in keywords if t in lowered_mandate and t not in COMMON_STOP_WORDS]
         if matched_kws:
             score += len(matched_kws) * 2
-        if any(t in sector.lower() for t in tokens if t not in COMMON_STOP_WORDS):
+        if any(t in sector.lower() for t in tokens if t and len(t) >= 3 and t not in COMMON_STOP_WORDS):
             score += 1
 
         # Accept domain fit (score >= 1)
@@ -286,19 +289,38 @@ def discover_candidate_universe(
         if len(discovered_names) >= target_count:
             break
 
-    # B. For CUSTOM commercial offerings needing more entities, search Wikipedia
-    if len(discovered_names) < target_count and tokens:
-        search_kw = " ".join(tokens[:2]) + " enterprise corporation"
-        search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count)
-        for h in search_hits:
-            if h["name"] not in discovered_names:
-                discovered_names.append(h["name"])
-                discovered_items.append(h)
-            if len(discovered_names) >= target_count:
+    # B. For CUSTOM commercial offerings, perform multi-query domain searches across Wikipedia
+    if not is_flagship and tokens:
+        stems = [t.rstrip('s').rstrip('es') if len(t) > 4 else t for t in tokens]
+        search_queries = [
+            f"{' '.join(tokens[:2])} companies",
+            f"{' '.join(tokens[:2])} brands",
+            f"{' '.join(tokens[:2])} manufacturers",
+            f"{stems[0]} company",
+            f"{stems[0]} brand food",
+            f"{stems[0]} manufacturer",
+        ]
+        if len(stems) > 1:
+            search_queries.extend([
+                f"{stems[1]} company",
+                f"{stems[1]} processing company",
+                f"{stems[1]} brand",
+                f"{' '.join(stems[:2])} food brands",
+            ])
+
+        for q in search_queries:
+            search_hits = search_companies_via_wikipedia(q, max_results=target_count)
+            for h in search_hits:
+                if h["name"] not in discovered_names:
+                    discovered_names.append(h["name"])
+                    discovered_items.append(h)
+                if len(discovered_names) >= target_count * 4:
+                    break
+            if len(discovered_names) >= target_count * 4:
                 break
 
-    # C. Supplement with flagship baseline enterprises if still below target
-    if len(discovered_names) < target_count:
+    # C. Supplement with flagship baseline enterprises ONLY for flagship offerings
+    if is_flagship and len(discovered_names) < target_count:
         for entry in GLOBAL_ENTERPRISE_INDEX:
             name = entry["name"]
             if name not in discovered_names:
@@ -328,12 +350,19 @@ def discover_candidate_universe(
             if clean_name in [
                 "software", "technology", "artificial intelligence", "cloud computing",
                 "cybersecurity", "company", "corporation", "industry", "automation",
-                "robotics", "logistics", "freight transport", "cargo",
+                "robotics", "logistics", "freight transport", "cargo", "tomato",
+                "tomato soup", "pickle", "pickled cucumber", "lists of foods",
             ]:
                 return None
 
-            # Reject non-commercial articles (schools, parks, geographic areas)
-            if any(bad in combined for bad in ["school", "district", "neighborhood", "community in", "park", "song", "album"]):
+            # Reject non-commercial articles (schools, parks, films, media, review aggregators)
+            non_commercial_terms = [
+                "school", "district", "neighborhood", "community in", "park",
+                "song", "album", "film", "movie", "television series", "web series",
+                "review aggregator", "review website", "cultivar", "variety of",
+                "species of", "botanical", "recipe", "dish", "condiment in cuisine",
+            ]
+            if any(bad in combined for bad in non_commercial_terms):
                 return None
 
             clean_dom = re.sub(r"[^a-zA-Z0-9]", "", item["name"]).lower()
@@ -353,7 +382,7 @@ def discover_candidate_universe(
                 "legal_name": entity.get("legal_name", item["name"]),
                 "country": entity.get("country", "EU"),
                 "headcount": entity.get("headcount") or extracted_hc,
-                "sector": entity.get("sector") or query_info["sector"],
+                "sector": entity.get("sector") or item.get("sector") or query_info["sector"],
                 "ticker": entity.get("ticker"),
                 "description": entity.get("description") or f"Enterprise operator aligned with {offering_mandate}.",
                 "is_solvent": True,

@@ -222,45 +222,6 @@ def query_prioritized_leads(
                             ))
                     results.sort(key=lambda x: x["overallScore"], reverse=True)
                     return results
-
-            # Resilient fallback: return top scored companies across database so Sales Manager is never left empty
-            all_scores = (
-                session.query(LeadScore)
-                .filter(LeadScore.is_disqualified.is_(False), LeadScore.composite_score >= min_score)
-                .order_by(LeadScore.composite_score.desc())
-                .all()
-            )
-            seen_comps = set()
-            fallback_results = []
-            for ls in all_scores:
-                if ls.company_id in seen_comps:
-                    continue
-                seen_comps.add(ls.company_id)
-                comp = session.query(Company).filter(Company.id == ls.company_id).first()
-                if comp:
-                    fallback_results.append(_build_lead_payload(
-                        comp=comp,
-                        score_val=ls.composite_score,
-                        summary_val=ls.executive_summary,
-                        off_name=service_line,
-                    ))
-            if fallback_results:
-                return fallback_results
-
-            # If database has companies without scores and min_score is low enough
-            if min_score <= 85:
-                companies = session.query(Company).all()
-                dyn_results = []
-                for comp in companies:
-                    if comp.domain in ["gitlab.com", "signa.at"]:
-                        continue
-                    dyn_results.append(_build_lead_payload(
-                        comp=comp,
-                        score_val=85,
-                        summary_val=f"Identified high commercial ICP alignment for {service_line}.",
-                        off_name=service_line,
-                    ))
-                return dyn_results
             return []
         finally:
             if close_session:
