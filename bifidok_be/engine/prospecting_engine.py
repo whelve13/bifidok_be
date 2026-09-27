@@ -3,6 +3,7 @@ Customer Prospecting Engine.
 Coordinates autonomous entity discovery, multi-source live signal harvesting,
 local machine learning scoring (LightGBM/LogisticRegression), and structured sales dossiers.
 """
+import concurrent.futures
 import logging
 import os
 from typing import Any, Dict, List, Optional, Union
@@ -19,7 +20,6 @@ from models import (
 )
 from engine.anti_hallucination import verify_verbatim_quote
 from engine.autonomous_scout import discover_candidate_universe
-from engine.candidate_pool import ENTERPRISE_UNIVERSE, find_candidate_by_name, get_candidate_universe
 from engine.local_ml.inference import predict_lead_evaluation
 from engine.offering_catalog import (
     FLAGSHIP_OFFERINGS,
@@ -31,7 +31,7 @@ from connectors.ats import fetch_ats_hiring_signals
 from connectors.financials import fetch_financial_signals
 from connectors.firmographics import resolve_company_entity
 from connectors.gdelt import fetch_gdelt_signals
-from connectors.news import fetch_company_news
+from connectors.news import evaluate_news_relevance, fetch_company_news
 from connectors.registries import verify_official_registry
 from connectors.security import analyze_security_posture
 from connectors.tenders import fetch_public_procurement_tenders
@@ -61,12 +61,12 @@ class CustomerProspectingEngine:
             compiled = decompose_custom_offering(clean)
             return offering_dict_to_profile(compiled)
 
-        return FLAGSHIP_OFFERINGS["commercial_bikes"]
+        return FLAGSHIP_OFFERINGS.get("Agentic Automation") or FLAGSHIP_OFFERINGS.get("agentic_automation")
 
     def evaluate_single_company(
         self,
         company_name: str,
-        offering: Union[str, Dict[str, Any], OfferingProfile] = "commercial_bikes",
+        offering: Union[str, Dict[str, Any], OfferingProfile] = "Agentic Automation",
         domain_hint: Optional[str] = None,
     ) -> PerfectCustomerDossier:
         """Alias for analyze_single_prospect for CLI compatibility."""
@@ -83,24 +83,37 @@ class CustomerProspectingEngine:
         resolved_offering = self._resolve_offering(offering)
         clean_input = company_name_or_domain.strip()
 
-        # 1. Resolve company profile
-        candidate = find_candidate_by_name(clean_input)
-        if candidate:
-            comp_data = dict(candidate)
-        else:
-            resolved_entity = resolve_company_entity(clean_input)
-            comp_data = {
-                "name": resolved_entity.get("name", clean_input),
-                "domain": resolved_entity.get("domain", f"{clean_input.lower().replace(' ', '')}.com"),
-                "legal_name": resolved_entity.get("legal_name", clean_input),
-                "country": resolved_entity.get("country", "EU"),
-                "headcount": resolved_entity.get("headcount"),
-                "sector": resolved_entity.get("sector") or "Industrial & Enterprise Operations",
-                "ticker": resolved_entity.get("ticker"),
-                "description": resolved_entity.get("description", "Enterprise operator."),
-                "is_solvent": True,
-                "operational_attributes": {},
-            }
+        # 1. Resolve company profile dynamically (no candidate pool bias)
+        resolved_entity = resolve_company_entity(clean_input)
+        comp_data = {
+            "name": resolved_entity.get("name", clean_input),
+            "domain": resolved_entity.get("domain", f"{clean_input.lower().replace(' ', '')}.com"),
+            "legal_name": resolved_entity.get("legal_name", clean_input),
+            "country": resolved_entity.get("country", "EU"),
+            "headcount": resolved_entity.get("headcount") or 15000,
+            "sector": resolved_entity.get("sector") or "Industrial & Enterprise Operations",
+            "ticker": resolved_entity.get("ticker"),
+            "description": resolved_entity.get("description", "Enterprise operator."),
+            "is_solvent": True,
+            "operational_attributes": dict(resolved_entity.get("operational_attributes", {})),
+        }
+
+        # Dynamic operational attribute and profile inference
+        profile_text = (
+            f"{comp_data.get('name', '')} {comp_data.get('description', '')} {clean_input}"
+        ).lower()
+
+        if any(w in profile_text for w in ["delivery", "logistics", "courier", "express", "parcel", "transport", "freight"]):
+            comp_data["operational_attributes"]["urban_delivery_fleets"] = True
+
+        if any(w in profile_text for w in ["chemical", "manufacturing", "industrial", "campus", "factory", "plant", "complex"]):
+            comp_data["operational_attributes"]["internal_campus_transit"] = True
+
+        if any(w in profile_text for w in ["all-remote", "100% remote", "remote-only", "remote model"]):
+            comp_data["operational_attributes"]["remote_only"] = True
+
+        if any(w in profile_text for w in ["insolvency", "bankruptcy", "insolvent", "liquidation"]):
+            comp_data["is_solvent"] = False
 
         company_name = comp_data["name"]
         domain = comp_data["domain"]
@@ -131,6 +144,11 @@ class CustomerProspectingEngine:
             "cisa_kev_count": 0,
             "github_repo_count": 0,
             "semantic_relevance": 0.85,
+            "detected_tech": [],
+            "has_enterprise_erp": False,
+            "tech_stack_breadth": 0,
+            "has_leadership_change": False,
+            "hiring_velocity_score": 0.0,
         }
 
         evidence_citations: List[ProspectEvidence] = []
@@ -147,6 +165,7 @@ class CustomerProspectingEngine:
                     points_awarded=35.0,
                 )
             )
+            signals["semantic_relevance"] = max(signals["semantic_relevance"], 0.98)
         elif comp_data.get("operational_attributes", {}).get("internal_campus_transit"):
             evidence_citations.append(
                 ProspectEvidence(
@@ -158,6 +177,7 @@ class CustomerProspectingEngine:
                     points_awarded=32.0,
                 )
             )
+            signals["semantic_relevance"] = max(signals["semantic_relevance"], 0.92)
 
         # B. News & Media
         try:
@@ -165,6 +185,21 @@ class CustomerProspectingEngine:
             signals["news_items"] = news
             if news:
                 signals["has_news"] = True
+                news_eval = evaluate_news_relevance(news, resolved_offering.signal_keywords)
+                if news_eval.get("has_leadership_change"):
+                    signals["has_leadership_change"] = True
+                    lead_articles = news_eval.get("leadership_articles", [])
+                    lead_snippet = lead_articles[0].get("title", "C-level appointment") if lead_articles else "Executive leadership appointment"
+                    evidence_citations.append(
+                        ProspectEvidence(
+                            category="Executive Leadership Catalyst",
+                            title="C-Level Leadership Appointment / Strategic Reorganization",
+                            snippet=f"Leadership transition detected: {lead_snippet[:80]}",
+                            source="Executive Intelligence Monitor",
+                            confidence=0.92,
+                            points_awarded=20.0,
+                        )
+                    )
                 top_n = news[0]
                 evidence_citations.append(
                     ProspectEvidence(
@@ -203,12 +238,15 @@ class CustomerProspectingEngine:
             ats_res = fetch_ats_hiring_signals(company_name, resolved_offering.ats_roles)
             matched = ats_res.get("matched_roles", [])
             signals["matched_roles"] = matched
+            signals["hiring_velocity_score"] = ats_res.get("hiring_velocity_score", 0.0)
+            if ats_res.get("is_remote_first"):
+                comp_data["operational_attributes"]["remote_only"] = True
             if matched:
                 evidence_citations.append(
                     ProspectEvidence(
                         category="Recruitment & Hiring Intent",
                         title=f"Target Roles Detected on Public ATS ({ats_res.get('ats_provider', 'Board')})",
-                        snippet=f"Active openings matching commercial requirements: {', '.join(matched[:3])}.",
+                        snippet=f"Active openings matching commercial requirements: {', '.join(matched[:3])}. Velocity score: {signals['hiring_velocity_score']:.2f}.",
                         source=f"{ats_res.get('ats_provider', 'ATS')} Job Board",
                         confidence=0.88,
                         points_awarded=15.0,
@@ -222,6 +260,21 @@ class CustomerProspectingEngine:
             sec_res = analyze_security_posture(domain)
             signals["security_grade"] = sec_res.get("grade", "B")
             signals["missing_headers"] = sec_res.get("missing_headers", [])
+            signals["detected_tech"] = sec_res.get("detected_tech", [])
+            signals["has_enterprise_erp"] = sec_res.get("has_enterprise_erp", False)
+            signals["tech_stack_breadth"] = sec_res.get("tech_stack_breadth", 0)
+
+            if signals["detected_tech"]:
+                evidence_citations.append(
+                    ProspectEvidence(
+                        category="Tech Stack Fingerprint",
+                        title=f"Enterprise Tech Stack Detected ({len(signals['detected_tech'])} systems)",
+                        snippet=f"Passive fingerprint identified enterprise infrastructure: {', '.join(signals['detected_tech'][:4])}.",
+                        source="Passive HTTP/TLS Header Reconnaissance",
+                        confidence=0.91,
+                        points_awarded=16.0,
+                    )
+                )
         except Exception:
             pass
 
@@ -260,42 +313,94 @@ class CustomerProspectingEngine:
             ]
 
         # Use company operational context to pick the optimal wedge
-        if comp_data.get("operational_attributes", {}).get("urban_delivery_fleets"):
-            primary_wedge = next((w for w in wedges if "Last-Mile" in w.name or "Cargo" in w.name), wedges[0])
-        elif comp_data.get("operational_attributes", {}).get("internal_campus_transit"):
-            primary_wedge = next((w for w in wedges if "Campus" in w.name or "Industrial" in w.name), wedges[min(1, len(wedges)-1)])
+        if wedge_idx < len(wedges):
+            primary_wedge = wedges[wedge_idx]
         else:
-            primary_wedge = wedges[min(wedge_idx, len(wedges) - 1)]
+            primary_wedge = wedges[0]
 
-        # Buying committee personas
-        buying_committee = [
-            DecisionMakerPersona(
-                title="VP of Operations / Fleet Director",
-                department="Operations & Logistics",
-                mandate="Scale operational efficiency while reducing urban last-mile emissions and maintenance overhead.",
-                outreach_hook=f"Addressing operational efficiency with {resolved_offering.title}.",
-            ),
-            DecisionMakerPersona(
-                title="Chief Sustainability Officer / ESG Lead",
-                department="Sustainability & Corporate Strategy",
-                mandate="Fulfill corporate Scope 3 decarbonization commitments under European CSRD mandates.",
-                outreach_hook="Auditable carbon emission reduction and zero-emission delivery transition.",
-            ),
-        ]
+        # Dynamic buying committee personas aligned with offering (CIO, CISO, CFO)
+        off_title_low = resolved_offering.title.lower()
+        if any(w in off_title_low for w in ["security", "soc", "cyber", "compliance", "nis2"]):
+            buying_committee = [
+                DecisionMakerPersona(
+                    title="Chief Information Security Officer (CISO)",
+                    department="Information Security & Compliance",
+                    mandate="Ensure 24/7 continuous threat detection and meet NIS2/DORA regulatory compliance deadlines.",
+                    outreach_hook=f"Addressing perimeter resilience and compliance with {resolved_offering.title}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Information Officer (CIO)",
+                    department="Enterprise IT & Infrastructure",
+                    mandate="Eliminate infrastructure vulnerabilities without disrupting line-of-business application availability.",
+                    outreach_hook=f"Seamlessly integrating SOC automation into existing IT architectures for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance, Risk & Governance",
+                    mandate="Mitigate catastrophic cyber insurance premiums and regulatory non-compliance fines.",
+                    outreach_hook=f"De-risking regulatory liabilities under EU NIS2 frameworks while optimizing internal security OpEx.",
+                ),
+            ]
+        elif any(w in off_title_low for w in ["cloud", "devops", "platform", "infrastructure", "modernization"]):
+            buying_committee = [
+                DecisionMakerPersona(
+                    title="Chief Information Officer (CIO) / VP of Cloud",
+                    department="Platform Engineering & Cloud Architecture",
+                    mandate="Modernize legacy application architectures and optimize multi-cloud infrastructure workloads.",
+                    outreach_hook=f"Accelerating cloud architecture modernization with {resolved_offering.title}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Information Security Officer (CISO)",
+                    department="Cloud Security & Governance",
+                    mandate="Guarantee sovereign data protection and zero-trust perimeter enforcement during cloud migration.",
+                    outreach_hook=f"De-risking cloud transition with automated compliance baselines for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance & Procurement",
+                    mandate="Rationalize cloud runaway spend (FinOps) and drive measurable ROI on IT capital expenditure.",
+                    outreach_hook=f"Structuring migration milestones to deliver clear OpEx predictability and cost efficiency.",
+                ),
+            ]
+        else:
+            # Default: Enterprise Automation / AI / Digital Transformation
+            buying_committee = [
+                DecisionMakerPersona(
+                    title="Chief Information Officer (CIO)",
+                    department="Information Technology & Enterprise Systems",
+                    mandate="Deploy auditable, sovereign AI workflows integrated directly with ERP/CRM without vendor lock-in.",
+                    outreach_hook=f"Evidence-grounded autonomous process automation and co-delivery acceleration for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Information Security Officer (CISO)",
+                    department="Information Security & Data Governance",
+                    mandate="Ensure enterprise data integrity, EU AI Act compliance, and air-gapped data boundary enforcement.",
+                    outreach_hook=f"Ensuring enterprise automation complies with strict data governance and ISO/SOC standards.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance & Operational Strategy",
+                    mandate="Drive operational margin expansion, reduce manual back-office overhead, and accelerate EBITDA growth.",
+                    outreach_hook=f"Accelerating operational throughput with measurable payback periods under 6 months.",
+                ),
+            ]
 
         # Estimated commercial scope
-        headcount = comp_data.get("headcount")
-        if headcount and headcount >= 50000:
-            estimated_scope = "€1.5M - €5.0M Enterprise-Wide Fleet Deployment"
-        elif headcount and headcount >= 5000:
-            estimated_scope = "€400K - €1.2M Multi-Facility Regional Rollout"
-        elif headcount:
-            estimated_scope = "€100K - €350K Targeted Operational Pilot"
+        raw_headcount = comp_data.get("headcount")
+        headcount = raw_headcount or 500
+        if headcount >= 50000:
+            estimated_scope = "€1.5M - €5.0M Enterprise-Wide Digital Transformation & Co-Delivery"
+        elif headcount >= 5000:
+            estimated_scope = "€400K - €1.2M Multi-Departmental Production Rollout"
         else:
-            estimated_scope = "Targeted Commercial Evaluation"
+            estimated_scope = "€100K - €350K Targeted Strategic Pilot & Architecture Assessment"
 
-        # Rationale and pitch
-        scale_text = f" and organizational scale ({headcount:,} employees)" if headcount else ""
+        # Rationale and grounded pitch with verbatim evidence citations
+        scale_text = f" and organizational scale ({headcount:,} employees)" if raw_headcount else ""
+        citations_summary = ""
+        if evidence_citations:
+            top_evidence_titles = [f"  - [{e.category}] {e.title}: \"{e.snippet}\"" for e in evidence_citations[:3]]
+            citations_summary = "\n\nVerified Public Signals & Catalysts:\n" + "\n".join(top_evidence_titles)
         operational_rationale = (
             f"{company_name} exhibits ideal enterprise characteristics for {resolved_offering.title}: "
             f"{primary_wedge.name} provides immediate operational synergy with their {comp_data.get('sector', 'Enterprise')} footprint, "
@@ -304,10 +409,10 @@ class CustomerProspectingEngine:
 
         pitch = (
             f"Subject: Accelerating {company_name}'s operational efficiency with {resolved_offering.title}\n\n"
-            f"Dear Team,\n\n"
-            f"Given {company_name}'s leadership in {comp_data.get('sector', 'the market')}, "
-            f"we noted strategic alignment regarding {primary_wedge.name}. "
-            f"Our solution helps enterprises achieve: {primary_wedge.value_driver}\n\n"
+            f"Dear Leadership Team at {company_name},\n\n"
+            f"Given {company_name}'s strategic position in {comp_data.get('sector', 'the market')}, "
+            f"we noted strong operational synergy regarding {primary_wedge.name}. "
+            f"Our solution helps enterprises achieve: {primary_wedge.value_driver}{citations_summary}\n\n"
             f"Would you be open to a 10-minute briefing next week?"
         )
 
@@ -348,17 +453,24 @@ class CustomerProspectingEngine:
         """
         resolved_offering = self._resolve_offering(offering)
         
-        # Discover candidates dynamically (with fallback to benchmark universe)
+        # Discover candidates dynamically across open web sources
         candidates = discover_candidate_universe(
             offering_mandate=resolved_offering.title,
             target_count=max_accounts,
-            include_benchmarks=True,
         )
 
         ranked = []
-        for cand in candidates[:max_accounts]:
-            dossier = self.analyze_single_prospect(cand["name"], resolved_offering)
-            ranked.append(dossier)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_cand = {
+                executor.submit(self.analyze_single_prospect, cand["name"], resolved_offering): cand
+                for cand in candidates[:max_accounts]
+            }
+            for fut in concurrent.futures.as_completed(future_to_cand):
+                try:
+                    dossier = fut.result()
+                    ranked.append(dossier)
+                except Exception:
+                    pass
 
         # Sort by propensity score descending (disqualified at the bottom)
         ranked.sort(key=lambda d: (not d.is_disqualified, d.propensity_score), reverse=True)

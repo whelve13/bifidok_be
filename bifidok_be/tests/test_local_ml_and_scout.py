@@ -53,8 +53,8 @@ class TestLocalMLAndScout(unittest.TestCase):
 
         vec = extract_feature_vector(company, signals, offering)
         self.assertIsInstance(vec, np.ndarray)
-        self.assertEqual(vec.shape, (14,))
-        self.assertEqual(len(FEATURE_NAMES), 14)
+        self.assertEqual(vec.shape, (len(FEATURE_NAMES),))
+        self.assertEqual(len(FEATURE_NAMES), 18)
         self.assertGreater(vec[0], 3.0)  # log10(5000) ~ 3.69
         self.assertEqual(vec[2], 1.0)    # is_solvent
 
@@ -134,9 +134,9 @@ class TestLocalMLAndScout(unittest.TestCase):
         self.assertIn("categories", queries)
         self.assertGreater(len(queries["categories"]), 0)
 
-        universe = discover_candidate_universe(mandate, target_count=5, include_benchmarks=True)
+        universe = discover_candidate_universe(mandate, target_count=5)
         self.assertIsInstance(universe, list)
-        self.assertGreaterEqual(len(universe), 3)
+        self.assertGreaterEqual(len(universe), 1)
 
         first = universe[0]
         self.assertIn("name", first)

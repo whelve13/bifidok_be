@@ -23,6 +23,10 @@ FEATURE_NAMES = [
     "semantic_relevance",
     "requires_physical_mismatch",
     "sector_alignment",
+    "tech_stack_breadth",
+    "has_enterprise_erp",
+    "has_leadership_catalyst",
+    "hiring_velocity_score",
 ]
 
 
@@ -108,6 +112,20 @@ def extract_feature_vector(
         if any(ts.lower() in comp_sector or comp_sector in ts.lower() for ts in target_sectors):
             sector_align = 1.0
 
+    # 15. Tech stack breadth (number of detected cloud/ERP/infrastructure systems)
+    tech_breadth = float(signals.get("tech_stack_breadth") or len(signals.get("detected_tech", [])))
+    if tech_breadth == 0 and signals.get("github_repo_count", 0) > 0:
+        tech_breadth = min(5.0, float(signals.get("github_repo_count", 0)) / 10.0)
+
+    # 16. Has enterprise ERP (SAP, Oracle, Salesforce)
+    has_erp = 1.0 if (signals.get("has_enterprise_erp") or any(t in str(signals.get("detected_tech", [])) for t in ["SAP", "Salesforce", "Oracle"])) else 0.0
+
+    # 17. Has leadership catalyst (new CIO/CISO/CTO appointment)
+    has_leadership = 1.0 if (signals.get("has_leadership_change") or signals.get("has_leadership_catalyst")) else 0.0
+
+    # 18. Hiring velocity score
+    hiring_vel = float(signals.get("hiring_velocity_score") or min(1.0, ats_role_count * 0.25))
+
     return np.array([
         headcount_log,
         operating_margin,
@@ -123,4 +141,8 @@ def extract_feature_vector(
         semantic_rel,
         requires_physical_mismatch,
         sector_align,
+        tech_breadth,
+        has_erp,
+        has_leadership,
+        hiring_vel,
     ], dtype=np.float32)

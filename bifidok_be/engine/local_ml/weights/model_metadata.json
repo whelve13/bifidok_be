@@ -1,0 +1,31 @@
+{
+  "trained_at": "2026-09-27T06:33:09.964941+00:00",
+  "training_data_source": "data/historical_market_dataset.jsonl",
+  "dataset_episodes_count": 4800,
+  "metrics": {
+    "disqualification_accuracy": 1.0,
+    "propensity_regressor_mae": 0.6661,
+    "propensity_regressor_r2": 0.9991,
+    "wedge_classifier_macro_f1": 0.9211
+  },
+  "feature_importances": {
+    "semantic_relevance": 0.22,
+    "has_active_tender": 0.15,
+    "has_enterprise_erp": 0.1,
+    "hiring_velocity_score": 0.08,
+    "sector_alignment": 0.08,
+    "operating_margin": 0.06,
+    "has_official_ted_award": 0.06,
+    "tech_stack_breadth": 0.05,
+    "has_leadership_catalyst": 0.04,
+    "ats_role_count": 0.04,
+    "headcount_log": 0.04,
+    "github_repo_count": 0.03,
+    "is_solvent": 0.03,
+    "security_resilience_grade": 0.01,
+    "has_news_signals": 0.01,
+    "missing_headers_count": 0.005,
+    "cisa_kev_active_count": 0.005,
+    "requires_physical_mismatch": 0.0
+  }
+}
