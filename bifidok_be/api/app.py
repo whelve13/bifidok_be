@@ -17,6 +17,7 @@ try:
     from api.routes_leads import router as leads_router
     from api.routes_outreach import router as outreach_router
     from api.routes_data import router as data_router
+    from api.routes_prospect import router as prospect_router
     from db.schema import Company
     from db.seed import seed_database
     from db.session import SessionLocal
@@ -27,6 +28,7 @@ except ImportError:
     from bifidok_be.api.routes_leads import router as leads_router
     from bifidok_be.api.routes_outreach import router as outreach_router
     from bifidok_be.api.routes_data import router as data_router
+    from bifidok_be.api.routes_prospect import router as prospect_router
     from bifidok_be.db.schema import Company
     from bifidok_be.db.seed import seed_database
     from bifidok_be.db.session import SessionLocal
@@ -76,6 +78,7 @@ app.include_router(leads_router)
 app.include_router(outreach_router)
 app.include_router(auth_router)
 app.include_router(data_router)
+app.include_router(prospect_router)
 
 try:
     from mcp_server import mcp
