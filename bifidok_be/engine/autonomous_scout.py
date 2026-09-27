@@ -246,82 +246,47 @@ def discover_candidate_universe(
     tokens = query_info.get("registry_terms", [])
     lowered_mandate = (offering_mandate or "").lower()
 
-    # Determine if mandate is one of the 3 flagship IT categories or a custom product/service
+    # Determine if mandate is one of the flagship commercial categories or a custom product/service
     is_flagship = any(
         f in lowered_mandate
-        for f in ["agentic", "automation", "managed soc", "soc & nis2", "cloud architecture", "cloud modernization"]
+        for f in [
+            "agentic", "automation", "managed soc", "soc & nis2", "soc",
+            "cloud architecture", "cloud modernization", "cloud",
+            "commercial bikes", "bike", "fleet", "logistics", "cargo"
+        ]
     )
 
     discovered_names: List[str] = []
     discovered_items: List[Dict[str, Any]] = []
 
-    # A. For CUSTOM commercial offerings, query live Wikipedia categories and entity search FIRST
-    if not is_flagship and tokens:
-        # 1. Direct Wikipedia entity search with domain tokens
-        search_kw = " ".join(tokens[:2]) + " companies"
-        search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count)
-        for h in search_hits:
-            if h["name"] not in discovered_names:
-                discovered_names.append(h["name"])
-                discovered_items.append(h)
-            if len(discovered_names) >= target_count:
-                break
+    # A. Match from Curated Global Enterprise Index first for high-confidence domain fit
+    for entry in GLOBAL_ENTERPRISE_INDEX:
+        name = entry["name"]
+        keywords = entry.get("keywords", [])
+        sector = entry.get("sector", "")
 
-        # 2. Query dynamically discovered Wikipedia categories
-        if len(discovered_names) < target_count:
-            for cat in query_info["categories"]:
-                if len(discovered_names) >= target_count:
-                    break
-                members = discover_companies_via_wikipedia(cat, max_results=target_count)
-                for m in members:
-                    if m["name"] not in discovered_names:
-                        discovered_names.append(m["name"])
-                        discovered_items.append(m)
-                    if len(discovered_names) >= target_count:
-                        break
+        score = 0
+        # Require exact non-generic domain keyword matches
+        matched_kws = [t for t in keywords if t in lowered_mandate and t not in COMMON_STOP_WORDS]
+        if matched_kws:
+            score += len(matched_kws) * 2
+        if any(t in sector.lower() for t in tokens if t not in COMMON_STOP_WORDS):
+            score += 1
 
-    # B. Match from Curated Global Enterprise Index (for flagship offerings or domain-matched supplement)
-    if len(discovered_names) < target_count:
-        for entry in GLOBAL_ENTERPRISE_INDEX:
-            name = entry["name"]
-            keywords = entry.get("keywords", [])
-            sector = entry.get("sector", "")
+        # Accept domain fit (score >= 1)
+        if score >= 1 and name not in discovered_names:
+            discovered_names.append(name)
+            discovered_items.append({
+                "name": name,
+                "source": f"Global Index:{sector}",
+                "country": entry.get("country", "Global"),
+                "sector": sector,
+                "domain": entry.get("domain", ""),
+            })
+        if len(discovered_names) >= target_count:
+            break
 
-            score = 0
-            # Require exact non-generic domain keyword matches
-            matched_kws = [t for t in keywords if t in lowered_mandate and t not in COMMON_STOP_WORDS]
-            if matched_kws:
-                score += len(matched_kws) * 2
-            if any(t in sector.lower() for t in tokens if t not in COMMON_STOP_WORDS):
-                score += 1
-
-            # Only accept high-confidence domain fit (score >= 2)
-            if score >= 2 and name not in discovered_names:
-                discovered_names.append(name)
-                discovered_items.append({
-                    "name": name,
-                    "source": f"Global Index:{sector}",
-                    "country": entry.get("country", "Global"),
-                    "sector": sector,
-                    "domain": entry.get("domain", ""),
-                })
-            if len(discovered_names) >= target_count:
-                break
-
-    # C. Supplement with Wikipedia categories if flagship offering needs more candidates
-    if len(discovered_names) < target_count:
-        for cat in query_info["categories"]:
-            if len(discovered_names) >= target_count:
-                break
-            members = discover_companies_via_wikipedia(cat, max_results=target_count)
-            for m in members:
-                if m["name"] not in discovered_names:
-                    discovered_names.append(m["name"])
-                    discovered_items.append(m)
-                if len(discovered_names) >= target_count:
-                    break
-
-    # D. Final fallback to entity search if still below target
+    # B. For CUSTOM commercial offerings needing more entities, search Wikipedia
     if len(discovered_names) < target_count and tokens:
         search_kw = " ".join(tokens[:2]) + " enterprise corporation"
         search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count)
@@ -329,6 +294,22 @@ def discover_candidate_universe(
             if h["name"] not in discovered_names:
                 discovered_names.append(h["name"])
                 discovered_items.append(h)
+            if len(discovered_names) >= target_count:
+                break
+
+    # C. Supplement with flagship baseline enterprises if still below target
+    if len(discovered_names) < target_count:
+        for entry in GLOBAL_ENTERPRISE_INDEX:
+            name = entry["name"]
+            if name not in discovered_names:
+                discovered_names.append(name)
+                discovered_items.append({
+                    "name": name,
+                    "source": f"Global Index:{entry.get('sector', 'Enterprise')}",
+                    "country": entry.get("country", "Global"),
+                    "sector": entry.get("sector", "Enterprise Operations"),
+                    "domain": entry.get("domain", ""),
+                })
             if len(discovered_names) >= target_count:
                 break
 
