@@ -95,10 +95,16 @@ def approve_outreach_draft(draft_id: str):
             detail=f"Outreach draft '{draft_id}' not found in queue.",
         )
 
-    # Transition status to DISPATCHED and record simulated delivery timestamp
+    # Transition status to DISPATCHED and record simulated delivery metadata
+    import os
     draft["status"] = "DISPATCHED"
     draft["dispatched_at"] = datetime.now(timezone.utc).isoformat()
     draft["simulated_dispatch"] = True
+    draft["simulation_status"] = "DISPATCHED_SIMULATED"
+    draft["message_id"] = f"sim-{os.urandom(6).hex()}@pipstream.internal"
+    draft["delivery_transport"] = "SIMULATED_SECURE_SANDBOX"
+    draft["delivery_latency_ms"] = 42
+    draft["compliance_note"] = "Simulated delivery successful. External SMTP/Brevo transmission safely bypassed."
 
     # Persist updated draft in memory
     OUTREACH_QUEUE[draft_id] = draft
@@ -112,7 +118,7 @@ def approve_outreach_draft(draft_id: str):
 
     return ApproveDraftResponse(
         status="DISPATCHED",
-        message=f"Draft {draft_id} approved and dispatched successfully.",
+        message=f"Draft {draft_id} approved and dispatched successfully (Sandbox Simulation Mode).",
         draft=draft,
     )
 

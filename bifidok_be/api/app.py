@@ -53,9 +53,9 @@ async def lifespan(app: FastAPI):
 
 # Instantiate FastAPI application conforming to Section 2
 app = FastAPI(
-    title="Orange Systems Sales Intelligence API",
+    title="PipStream Sales Intelligence API",
     version="1.0.0",
-    description="Enterprise AI Sales Intelligence Platform API Core",
+    description="PipStream Enterprise AI Commercial Sales Intelligence Platform API Core",
     lifespan=lifespan,
 )
 
@@ -105,16 +105,18 @@ def root():
     Root API discovery endpoint providing platform metadata and core endpoints.
     """
     return {
-        "name": "Orange Systems Sales Intelligence Platform API",
+        "name": "PipStream Commercial Sales Intelligence Platform API",
         "version": "1.0.0",
         "status": "ONLINE",
         "docs_url": "/docs",
         "health_url": "/healthz",
         "endpoints": {
             "leads": "/api/leads",
+            "prospect": "/api/leads/prospect",
             "compile_offering": "/api/offerings/compile",
             "outreach": "/api/outreach",
             "auth": "/api/auth/token",
+            "mcp_keys": "/api/auth/keys",
         },
     }
 
