@@ -25,16 +25,23 @@ except ImportError:
 security = HTTPBearer(auto_error=False)
 
 
-def generate_api_key(tenant_name: str, session: Session) -> Tuple[str, str]:
+def generate_api_key(
+    tenant_name: str,
+    session: Session,
+    key_prefix: Optional[str] = None,
+) -> Tuple[str, str]:
     """
-    Creates an API key with prefix 'orange_sk_', computes SHA-256 hash,
+    Creates an API key with prefix 'orange_sk_' (or 'pip_sk_'), computes SHA-256 hash,
     stores in mcp_api_keys table, and returns (raw_key, key_hash).
     """
     clean_tenant = str(tenant_name or "").strip()
     if not clean_tenant:
         raise ValueError("tenant_name must be a non-empty string.")
 
-    raw_key = f"orange_sk_{secrets.token_hex(16)}"
+    prefix = key_prefix or ("pip_sk" if "pip" in clean_tenant.lower() else "orange_sk")
+    if prefix.endswith("_"):
+        prefix = prefix[:-1]
+    raw_key = f"{prefix}_{secrets.token_hex(16)}"
     key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
     create_mcp_api_key(
@@ -79,7 +86,7 @@ def get_authenticated_tenant(
     strict_production = os.getenv("STRICT_PRODUCTION", "False").lower() in ("true", "1", "yes")
 
     # Development bypass for local testing and debugging
-    if not strict_production and token == "orange_dev_token":
+    if not strict_production and token in ("orange_dev_token", "pip_dev_token", "pipstream_dev_token"):
         return MCPApiKey(
             id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
             tenant_name="dev_tenant",
@@ -107,6 +114,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 class ApiKeyProvisionRequest(BaseModel):
     tenant_name: str = Field(..., description="Organization or tenant name")
+    key_prefix: Optional[str] = Field(None, description="Optional key prefix (e.g. 'pip_sk' or 'orange_sk')")
 
 
 class ApiKeyProvisionResponse(BaseModel):
@@ -123,12 +131,32 @@ def provision_api_key(
     """
     Provisions a new API key for external agent access (Section 2 & Section 5.2).
     """
-    raw_key, key_hash = generate_api_key(request.tenant_name, session)
+    raw_key, key_hash = generate_api_key(request.tenant_name, session, key_prefix=request.key_prefix)
     return ApiKeyProvisionResponse(
         tenant_name=request.tenant_name,
         raw_key=raw_key,
         key_hash=key_hash,
     )
+
+
+@router.get("/keys")
+def list_api_keys(session: Session = Depends(get_db)):
+    """
+    Lists provisioned active API keys (masked for security).
+    """
+    try:
+        keys = session.query(MCPApiKey).filter(MCPApiKey.is_active.is_(True)).limit(10).all()
+        return [
+            {
+                "tenant_name": k.tenant_name,
+                "key_prefix": "pip_sk_...",
+                "is_active": k.is_active,
+                "created_at": k.created_at.isoformat() if hasattr(k, "created_at") and k.created_at else None,
+            }
+            for k in keys
+        ]
+    except Exception:
+        return []
 
 
 @router.get("/verify")

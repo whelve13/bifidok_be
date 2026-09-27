@@ -72,6 +72,7 @@ class PerfectCustomerDossier(BaseModel):
     target_buying_committee: List[DecisionMakerPersona] = Field(default_factory=list)
     estimated_commercial_scope: str
     strategic_pitch_narrative: str
+    commercial_verification: Optional[Dict[str, Any]] = None
 
 class ProspectingUniverseResult(BaseModel):
     offering: OfferingProfile

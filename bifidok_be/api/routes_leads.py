@@ -90,3 +90,80 @@ def submit_lead_feedback(lead_id: str, feedback: LeadFeedbackRequest):
         notes=feedback.notes or "",
     )
     return feedback_record
+
+
+class ProspectUniverseRequest(BaseModel):
+    offering: str = Field(default="Agentic Automation", description="Target commercial mandate or offering")
+    max_accounts: int = Field(default=8, ge=1, le=30, description="Max candidate accounts to evaluate")
+
+
+@router.post("/prospect", response_model=Dict[str, Any])
+def prospect_commercial_universe(request: ProspectUniverseRequest):
+    """
+    Triggers the autonomous prospecting engine across open sources,
+    applying local ML models and the Gemini Commercial Verification anti-false-positive filter.
+    """
+    try:
+        from engine.prospecting_engine import CustomerProspectingEngine
+    except ImportError:
+        from bifidok_be.engine.prospecting_engine import CustomerProspectingEngine
+
+    engine = CustomerProspectingEngine()
+    result = engine.prospect_universe(offering=request.offering, max_accounts=request.max_accounts)
+
+    leads = []
+    for d in result.ranked_customers:
+        d_dict = d.model_dump()
+        c = d.company
+        leads.append({
+            "id": f"lead-{c.domain.replace('.', '-')}",
+            "company": c.name,
+            "name": c.name,
+            "domain": c.domain,
+            "score": round(d.propensity_score, 1),
+            "overallScore": round(d.propensity_score, 1),
+            "industry": c.sector,
+            "headcount": c.headcount,
+            "headquarters": c.country,
+            "logo": f"https://logo.clearbit.com/{c.domain}",
+            "website": f"https://www.{c.domain}",
+            "summary": d.operational_rationale,
+            "tier": d.tier,
+            "is_disqualified": d.is_disqualified,
+            "disqualification_reason": d.disqualification_reason,
+            "commercial_wedge": d.primary_commercial_wedge.name,
+            "estimated_commercial_scope": d.estimated_commercial_scope,
+            "strategic_pitch": d.strategic_pitch_narrative,
+            "commercial_verification": d_dict.get("commercial_verification"),
+            "signals": [
+                {
+                    "id": f"sig-{c.domain.replace('.', '-')}-{i}",
+                    "title": e.title,
+                    "snippet": e.snippet,
+                    "source": e.source,
+                    "category": e.category,
+                    "impact": f"+{int(e.points_awarded)} pts" if e.points_awarded > 0 else "+15 pts",
+                    "type": "positive",
+                }
+                for i, e in enumerate(d.evidence_citations)
+            ],
+            "keyDecisionMakers": [
+                {"name": dm.full_name, "role": dm.title, "focus": dm.seniority}
+                for dm in d.target_buying_committee
+            ],
+            "outreachDraft": {
+                "channel": "Executive Email",
+                "subject": f"Commercial Synergy: {result.offering.title} for {c.name}",
+                "body": d.strategic_pitch_narrative,
+            },
+        })
+
+    return {
+        "status": "COMPLETED",
+        "offering_title": result.offering.title,
+        "total_evaluated": result.total_evaluated,
+        "tier1_count": result.tier1_count,
+        "tier2_count": result.tier2_count,
+        "leads": leads,
+    }
+

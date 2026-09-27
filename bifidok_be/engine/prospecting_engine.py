@@ -26,6 +26,11 @@ from engine.offering_catalog import (
     decompose_custom_offering,
     offering_dict_to_profile,
 )
+try:
+    from engine.commercial_verifier import verify_commercial_fit
+except ImportError:
+    from bifidok_be.engine.commercial_verifier import verify_commercial_fit
+
 
 from connectors.ats import fetch_ats_hiring_signals
 from connectors.developer import fetch_developer_signals
@@ -502,6 +507,27 @@ class CustomerProspectingEngine:
             f"Would you be open to a 10-minute briefing next week?"
         )
 
+        # Commercial Verification & Anti-False-Positive Underwriting
+        snippets = [e.snippet for e in evidence_citations]
+        verification = verify_commercial_fit(
+            offering_title=resolved_offering.title,
+            offering_description=resolved_offering.description,
+            company_name=company_name,
+            company_sector=comp_data.get("sector", "Enterprise"),
+            company_description=comp_data.get("description", ""),
+            evidence_snippets=snippets,
+            operational_attributes=comp_data.get("operational_attributes", {}),
+        )
+
+        if verification.domain_mismatch or not verification.is_approved:
+            is_disqualified = True
+            disqualification_reason = verification.rejection_reason or "Commercial domain mismatch detected."
+            tier = "Disqualified"
+            propensity_score = min(propensity_score, 25.0)
+
+        if verification.executive_angle:
+            operational_rationale = f"{operational_rationale}\n\nStrategic Executive Angle: {verification.executive_angle}"
+
         return PerfectCustomerDossier(
             company=CompanyProfile(
                 name=company_name,
@@ -527,6 +553,7 @@ class CustomerProspectingEngine:
             target_buying_committee=buying_committee,
             estimated_commercial_scope=estimated_scope,
             strategic_pitch_narrative=pitch,
+            commercial_verification=verification.model_dump(),
         )
 
     def prospect_universe(
