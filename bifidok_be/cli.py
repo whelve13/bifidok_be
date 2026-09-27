@@ -177,11 +177,12 @@ def prospect_and_render(offering_input: Any):
         )
     console.print(summary_table)
 
-    inspect_choice = Prompt.ask("\nEnter Rank # to view full dossier (or press Enter to return to menu)", default="")
-    if inspect_choice.isdigit():
-        idx = int(inspect_choice) - 1
-        if 0 <= idx < len(result.ranked_customers):
-            render_dossier(result.ranked_customers[idx], rank=idx+1)
+    if sys.stdin.isatty():
+        inspect_choice = Prompt.ask("\nEnter Rank # to view full dossier (or press Enter to return to menu)", default="")
+        if inspect_choice.isdigit():
+            idx = int(inspect_choice) - 1
+            if 0 <= idx < len(result.ranked_customers):
+                render_dossier(result.ranked_customers[idx], rank=idx+1)
 
 
 def evaluate_single_account(company_name: str, offering_key: str = "commercial_bikes", domain_hint: Optional[str] = None):
@@ -308,7 +309,7 @@ def test_individual_connectors():
 def run_train_models(target_samples: int = 450, show_details: bool = True):
     console.print("\n[bold cyan]>>> Training Local Machine Learning Models on Real Market Data...[/bold cyan]")
     with console.status("[bold green]Loading empirical market dataset and fitting LightGBM / Calibrated Classifiers...", spinner="dots"):
-        result = train_and_save_models()
+        result = train_and_save_models(target_samples=target_samples)
 
     meta = result.get("metadata", {})
     metrics = meta.get("metrics", {})
@@ -347,38 +348,46 @@ def run_train_models(target_samples: int = 450, show_details: bool = True):
         imp_table.add_column("Impact Description", style="dim")
 
         descriptions = {
-            "headcount_log": "Procurement scale & organizational capacity",
-            "operating_margin": "Financial health & margin compression urgency",
-            "is_solvent": "Hard solvency / liquidation gate",
-            "ats_role_count": "Active hiring velocity in IT / engineering",
-            "has_active_tender": "Active RFP / public procurement demand",
-            "has_official_ted_award": "Official European contract award history",
-            "has_news_signals": "Press coverage on transformation / restructuring",
-            "security_resilience_grade": "Perimeter security posture (A to F)",
-            "missing_headers_count": "Security vulnerability gap",
-            "cisa_kev_active_count": "Active weaponized CISA vulnerabilities",
-            "github_repo_count": "Internal software engineering capability",
             "semantic_relevance": "Core service / domain capability alignment",
+            "has_active_tender": "Active RFP / public procurement demand",
+            "has_enterprise_erp": "Core ERP footprint (SAP, Oracle, Salesforce)",
+            "hiring_velocity_score": "High-velocity technical & specialist recruitment",
+            "sector_alignment": "Target vertical industry fit",
+            "operating_margin": "Financial health & investment budget capacity",
+            "has_official_ted_award": "Official European contract award history",
+            "tech_stack_breadth": "Enterprise tech stack maturity & cloud breadth",
+            "has_leadership_catalyst": "Executive leadership catalyst (new CIO/CISO/CTO)",
+            "ats_role_count": "Active hiring in target engineering roles",
+            "headcount_log": "Baseline organizational scale (capped capacity check)",
+            "github_repo_count": "Internal software engineering capability",
+            "is_solvent": "Hard solvency / liquidation gate",
+            "security_resilience_grade": "Perimeter security posture (A to F)",
+            "has_news_signals": "Press coverage on transformation / restructuring",
+            "missing_headers_count": "Security vulnerability configuration gap",
+            "cisa_kev_active_count": "Active weaponized CISA vulnerabilities",
             "requires_physical_mismatch": "Physical footprint alignment",
-            "sector_alignment": "Industry vertical fit",
         }
 
         for feat, weight in sorted(importances.items(), key=lambda x: x[1], reverse=True):
             imp_table.add_row(feat, f"{weight * 100:.1f}%", descriptions.get(feat, "-"))
         console.print(imp_table)
 
-    console.print(f"[bold green]Models successfully serialized to '{WEIGHTS_DIR}'[/bold green]\n")
+    try:
+        from engine.local_ml.inference import reload_local_models
+        reload_local_models()
+    except Exception:
+        pass
+
+    console.print(f"[bold green][OK] Local ML models successfully serialized to '{WEIGHTS_DIR}' and active in memory.[/bold green]")
+    console.print("[bold green][OK] Options 1, 2, and 3 will now use this freshly trained model![/bold green]\n")
 
 
-def run_harvest_data(rebuild: bool = True, show_stats: bool = True):
-    console.print("\n[bold cyan]>>> Fetching and compiling historical market data...[/bold cyan]")
-    with console.status("[bold green]Compiling empirical corporate records and historical buying signals...", spinner="dots"):
-        if rebuild:
-            records = build_and_save_historical_market_dataset()
-        else:
-            records = load_historical_market_dataset()
+def run_harvest_data(days: int = 90, rebuild: bool = True, show_stats: bool = True):
+    console.print(f"\n[bold cyan]>>> Fetching and compiling historical market data for {days} days...[/bold cyan]")
+    with console.status(f"[bold green]Compiling empirical corporate records and historical buying signals ({days} days window)...", spinner="dots"):
+        records = build_and_save_historical_market_dataset(days=days)
 
-    console.print(f"[bold green]Successfully compiled {len(records)} verified enterprise records.[/bold green]")
+    console.print(f"[bold green]Successfully compiled {len(records)} verified enterprise records across {days} days.[/bold green]")
 
     if show_stats and records:
         total = len(records)
@@ -390,10 +399,11 @@ def run_harvest_data(rebuild: bool = True, show_stats: bool = True):
             w = r.get("primary_wedge", 0)
             wedge_counts[w] = wedge_counts.get(w, 0) + 1
 
-        stats_table = Table(title="Historical Market Dataset Summary", box=box.ROUNDED)
+        stats_table = Table(title=f"Historical Market Dataset Summary ({days} Days Horizon)", box=box.ROUNDED)
         stats_table.add_column("Metric / Dimension", style="bold white")
         stats_table.add_column("Count / Distribution", style="cyan")
 
+        stats_table.add_row("Data Window Horizon", f"{days} days")
         stats_table.add_row("Total Enterprise Records", str(total))
         stats_table.add_row("Active / Solvent Enterprises", f"[green]{solvent}[/green] ({solvent/total*100:.1f}%)")
         stats_table.add_row("Insolvent / Disqualified Cases", f"[red]{insolvent}[/red] ({insolvent/total*100:.1f}%)")
@@ -403,6 +413,7 @@ def run_harvest_data(rebuild: bool = True, show_stats: bool = True):
         stats_table.add_row("Dataset File Path", HISTORICAL_DATASET_PATH)
 
         console.print(stats_table)
+        console.print(f"[bold green][OK] Historical market dataset is ready. You can now train the ML models using Option 5![/bold green]\n")
 
 
 def run_fetch_live_data(company_name: str, domain_hint: Optional[str] = None):
@@ -636,99 +647,197 @@ def run_custom_offering_workflow(initial_prompt: Optional[str] = None):
                 console.print("[bold green]New signal question added successfully.[/bold green]")
 
 
+def run_find_top_companies():
+    """Option 1: Find top companies for offer X using the trained ML model."""
+    console.print("\n[bold yellow]Find top companies for Offer X:[/bold yellow]")
+    console.print("  [1] Agentic Process Automation & AI Workforce")
+    console.print("  [2] Managed SOC & NIS2 Cyber Resilience")
+    console.print("  [3] Cloud Architecture & Modernization")
+    console.print("  [4] Custom Commercial Offering (type any product/service)")
+
+    off_choice = Prompt.ask("Select commercial offer X", choices=["1", "2", "3", "4"], default="1")
+    if off_choice == "1":
+        prospect_and_render("agentic_automation")
+    elif off_choice == "2":
+        prospect_and_render("managed_soc")
+    elif off_choice == "3":
+        prospect_and_render("cloud_modernization")
+    elif off_choice == "4":
+        custom_offer = Prompt.ask("Enter custom product or service offering description")
+        if custom_offer.strip():
+            prospect_and_render(custom_offer.strip())
+        else:
+            console.print("[red]No offering entered. Returning to menu.[/red]")
+
+
+def find_best_offer_for_company(company_name: str, domain_hint: Optional[str] = None):
+    """
+    Option 2: Evaluates Company X across candidate offerings using the trained ML model
+    (disqualification classifier, LightGBM propensity regressor, and RandomForest wedge classifier),
+    ranks the offerings by fit and propensity score, and highlights the best-fit recommendation.
+    """
+    clean_company = company_name.strip()
+    console.print(f"\n[bold green]>>> Finding best commercial offer for '{clean_company}' using trained ML models...[/bold green]")
+    candidate_offerings = [
+        ("agentic_automation", "Agentic Process Automation & AI Workforce"),
+        ("managed_soc", "Managed SOC & NIS2 Cyber Resilience"),
+        ("cloud_modernization", "Cloud Architecture & Modernization"),
+    ]
+
+    evaluations = []
+    with console.status(f"[bold cyan]Harvesting signals and computing ML propensity for {clean_company} across offerings...", spinner="dots"):
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_off = {
+                executor.submit(engine.evaluate_single_company, clean_company, off_key, domain_hint): (off_key, off_title)
+                for off_key, off_title in candidate_offerings
+            }
+            for fut in concurrent.futures.as_completed(future_to_off):
+                off_key, off_title = future_to_off[fut]
+                try:
+                    dossier = fut.result()
+                    evaluations.append((off_key, off_title, dossier))
+                except Exception as e:
+                    logger.error("Evaluation failed for %s with %s: %s", clean_company, off_key, e)
+
+    if not evaluations:
+        console.print(f"[red]Could not evaluate offerings for '{clean_company}'. Please verify the company name.[/red]")
+        return
+
+    # Sort by propensity score descending (disqualified at the bottom)
+    evaluations.sort(key=lambda item: (not item[2].is_disqualified, item[2].propensity_score), reverse=True)
+
+    summary_table = Table(title=f"Commercial Offering Ranking for {clean_company}", box=box.HEAVY_EDGE)
+    summary_table.add_column("Rank", justify="right", style="bold")
+    summary_table.add_column("Commercial Offering", style="bold white")
+    summary_table.add_column("Propensity Score", justify="right")
+    summary_table.add_column("Tier", style="cyan")
+    summary_table.add_column("Primary Commercial Wedge", style="yellow")
+    summary_table.add_column("Status / Recommendation", style="bold")
+
+    for i, (off_key, off_title, d) in enumerate(evaluations, 1):
+        if d.is_disqualified:
+            score_color = "red"
+            rec_status = f"[red]Disqualified ({d.disqualification_reason[:30]}...)[/red]"
+        elif i == 1:
+            score_color = "bold green"
+            rec_status = "[bold green][TOP MATCH][/bold green]"
+        else:
+            score_color = "yellow"
+            rec_status = "[dim]Alternative Offering[/dim]"
+
+        score_text = f"[{score_color}]{d.propensity_score:.1f}/100[/{score_color}]"
+        wedge_name = d.primary_commercial_wedge.name if d.primary_commercial_wedge else "-"
+        summary_table.add_row(
+            str(i),
+            off_title,
+            score_text,
+            d.tier,
+            wedge_name,
+            rec_status,
+        )
+
+    console.print(summary_table)
+
+    best_key, best_title, best_dossier = evaluations[0]
+    if not best_dossier.is_disqualified:
+        rec_panel = Text()
+        rec_panel.append(f"Top Recommended Offering: {best_title}\n", style="bold green")
+        rec_panel.append(f"Propensity Score: {best_dossier.propensity_score:.1f}/100  [{best_dossier.tier}]\n", style="bold yellow")
+        rec_panel.append(f"Primary Commercial Wedge: {best_dossier.primary_commercial_wedge.name}\n", style="bold white")
+        rec_panel.append(f"Wedge Value Driver: {best_dossier.primary_commercial_wedge.value_driver}\n", style="italic")
+        rec_panel.append(f"Estimated Scope: {best_dossier.estimated_commercial_scope}\n", style="cyan")
+        rec_panel.append(f"Operational Rationale: {best_dossier.operational_rationale}", style="dim")
+        console.print(Panel(rec_panel, title=f"[bold]Best Commercial Match for {clean_company}[/bold]", border_style="green"))
+
+        if sys.stdin.isatty():
+            inspect_choice = Prompt.ask("\nWould you like to view the full sales dossier for this best offer? [Y/n]", default="y")
+            if inspect_choice.lower() in ("y", "yes", ""):
+                render_dossier(best_dossier, rank=1)
+        else:
+            render_dossier(best_dossier, rank=1)
+    else:
+        console.print(f"[bold red]Note: {clean_company} is disqualified across offerings: {best_dossier.disqualification_reason}[/bold red]")
+
+
+def run_analyze_offer_with_company():
+    """Option 3: Analyze Offer X with Company X using the trained ML model."""
+    console.print("\n[bold yellow]Select or specify Offer X:[/bold yellow]")
+    console.print("  [1] Agentic Process Automation & AI Workforce")
+    console.print("  [2] Managed SOC & NIS2 Cyber Resilience")
+    console.print("  [3] Cloud Architecture & Modernization")
+    console.print("  [4] Custom Commercial Offering (type any product/service)")
+
+    off_choice = Prompt.ask("Choose offer X", choices=["1", "2", "3", "4"], default="1")
+    off_map = {
+        "1": "agentic_automation",
+        "2": "managed_soc",
+        "3": "cloud_modernization",
+    }
+    if off_choice == "4":
+        offering_str = Prompt.ask("Enter custom offering description")
+    else:
+        offering_str = off_map[off_choice]
+
+    comp_name = Prompt.ask("Enter Company X name to evaluate (e.g. DHL Group, BASF, Siemens, Zalando)")
+    if not comp_name.strip():
+        console.print("[red]No company entered. Returning to menu.[/red]")
+        return
+    dom_hint = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
+    evaluate_single_account(comp_name.strip(), offering_str.strip(), dom_hint.strip() if dom_hint.strip() else None)
+
+
 def interactive_menu():
     while True:
         console.print("\n" + "=" * 75)
         console.print(Panel.fit(
             "[bold white]Orange Systems - Autonomous Customer Prospecting & Buying Intent Engine[/bold white]\n"
-            "[dim]Dynamic Offering Decomposer • Multi-Source Evidence Harvesting • Actionable Sales Dossiers[/dim]",
+            "[dim]Trained Local ML Models • Multi-Source Evidence Harvesting • Actionable Sales Dossiers[/dim]",
             border_style="cyan"
         ))
         console.print("[bold yellow]MAIN MENU:[/bold yellow]")
-        console.print("  [bold green][1][/bold green] Find Perfect Customers for an Offering (Autonomous Prospecting Scan)")
-        console.print("  [bold green][2][/bold green] Deep-Dive Single Enterprise Fit for an Offering (e.g. DHL, Siemens, Zalando)")
-        console.print("  [bold green][3][/bold green] Explore Commercial Offerings & Intelligent Operational Wedges")
-        console.print("  [bold green][4][/bold green] Custom Commercial Offering (Interactive Rule Configurator & Prospecting)")
-        console.print("  [bold green][5][/bold green] Test Individual Live Data Connectors (With Custom Search Keywords)")
-        console.print("  [bold green][6][/bold green] Export Prospect Dossiers to JSON (HubSpot / CRM Ready)")
-        console.print("  [bold green][7][/bold green] Run Preflight Diagnostics (Doctor)")
-        console.print("  [bold green][8][/bold green] Seed Database with Canonical Data")
-        console.print("  [bold green][9][/bold green] Train Local ML Models on Real Historical Market Data")
-        console.print("  [bold green][10][/bold green] Harvest & Compile Historical Market Dataset")
-        console.print("  [bold green][11][/bold green] Fetch Live Multi-Source Signals for a Company")
-        console.print("  [bold green][12][/bold green] View Model Weights & Validation Metadata")
+        console.print("  [bold green][1][/bold green] Find top companies for offer X")
+        console.print("  [bold green][2][/bold green] Find best offer for X company")
+        console.print("  [bold green][3][/bold green] Analyze Offer X with Company X")
+        console.print("  [bold green][4][/bold green] Fetch data (input data amount in days)")
+        console.print("  [bold green][5][/bold green] Train on data")
         console.print("  [bold red][0][/bold red] Exit")
 
-        choice = Prompt.ask("\n[bold cyan]Select an option[/bold cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"], default="1")
+        choice = Prompt.ask(
+            "\n[bold cyan]Select an option[/bold cyan]",
+            choices=["0", "1", "2", "3", "4", "5"],
+            default="1",
+        )
 
         if choice == "0":
             console.print("[bold cyan]Exiting Orange Systems Intelligence CLI. Goodbye![/bold cyan]")
             break
         elif choice == "1":
-            console.print("\n[bold yellow]Select a Commercial Offering to find customers for:[/bold yellow]")
-            console.print("  [bold green][1][/bold green] Agentic Process Automation & AI Workforce [dim](Back-office overhead, ERP/CRM integration, autonomous agents)[/dim]")
-            console.print("  [bold green][2][/bold green] Managed SOC & NIS2/DORA Cyber Resilience [dim](Perimeter compliance, 24/7 SOC, vulnerability monitoring)[/dim]")
-            console.print("  [bold green][3][/bold green] Cloud Architecture & Modernization [dim](Multi-cloud migration, Kubernetes, FinOps cost governance)[/dim]")
-            console.print("  [bold green][4][/bold green] Custom Commercial Offering [dim](Type ANY product or service you want to sell)[/dim]")
-
-            off_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
-            if off_choice == "1":
-                prospect_and_render("agentic_automation")
-            elif off_choice == "2":
-                prospect_and_render("managed_soc")
-            elif off_choice == "3":
-                prospect_and_render("cloud_modernization")
-            elif off_choice == "4":
-                run_custom_offering_workflow()
-
+            run_find_top_companies()
         elif choice == "2":
-            comp_name = Prompt.ask("Enter company name to evaluate (e.g. DHL Group, BASF, Siemens, Zalando)")
-            dom_hint = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
-
-            console.print("\n[bold yellow]Select the Commercial Offering to evaluate against:[/bold yellow]")
-            console.print("  [1] Agentic Process Automation & AI Workforce")
-            console.print("  [2] Managed SOC & NIS2 Cyber Resilience")
-            console.print("  [3] Cloud Architecture & Modernization")
-            console.print("  [4] Custom Offering Text")
-            o_choice = Prompt.ask("Choose offering", choices=["1", "2", "3", "4"], default="1")
-
-            off_map = {
-                "1": "agentic_automation",
-                "2": "managed_soc",
-                "3": "cloud_modernization"
-            }
-            if o_choice == "4":
-                offering_str = Prompt.ask("Enter offering text")
+            comp = Prompt.ask("\nEnter Company X name (e.g. DHL Group, Siemens, BASF, Zalando)")
+            if comp.strip():
+                dom = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
+                find_best_offer_for_company(comp.strip(), dom.strip() if dom.strip() else None)
             else:
-                offering_str = off_map[o_choice]
-
-            evaluate_single_account(comp_name, offering_str, dom_hint if dom_hint.strip() else None)
-
+                console.print("[red]No company entered. Returning to menu.[/red]")
         elif choice == "3":
-            display_offerings_catalog()
+            run_analyze_offer_with_company()
         elif choice == "4":
-            run_custom_offering_workflow()
+            days_str = Prompt.ask("\nEnter data amount in days to fetch (e.g. 30, 90, 180, 365)", default="90")
+            try:
+                days = int(days_str.strip())
+                if days <= 0:
+                    raise ValueError()
+            except ValueError:
+                console.print("[red]Invalid days value. Using default of 90 days.[/red]")
+                days = 90
+            run_harvest_data(days=days, show_stats=True)
         elif choice == "5":
-            test_individual_connectors()
-        elif choice == "6":
-            export_last_result()
-        elif choice == "7":
-            run_doctor()
-        elif choice == "8":
-            run_seed()
-        elif choice == "9":
-            samples_str = Prompt.ask("Enter target training episodes count", default="450")
+            samples_str = Prompt.ask("\nEnter target training episodes count", default="450")
             samples = int(samples_str) if samples_str.isdigit() else 450
             run_train_models(target_samples=samples, show_details=True)
-        elif choice == "10":
-            rebuild_choice = Prompt.ask("Force rebuild dataset from scratch? [y/N]", choices=["y", "n", "Y", "N", ""], default="n")
-            run_harvest_data(rebuild=(rebuild_choice.lower() == "y"), show_stats=True)
-        elif choice == "11":
-            comp = Prompt.ask("Enter company name to harvest live intelligence for", default="DHL Group")
-            dom = Prompt.ask("Enter domain hint (optional, press Enter to auto-resolve)", default="")
-            run_fetch_live_data(comp, dom if dom.strip() else None)
-        elif choice == "12":
-            run_show_model_metadata()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Orange Systems Autonomous Customer Prospecting CLI")
@@ -737,70 +846,59 @@ def main():
     # Command: menu
     subparsers.add_parser("menu", help="Launch interactive navigation menu")
 
-    # Command: doctor
-    subparsers.add_parser("doctor", help="Run preflight system health diagnostics")
+    # Command: 1. find-companies (alias: prospect)
+    prospect_parser = subparsers.add_parser("find-companies", aliases=["prospect"], help="Find top companies for offer X")
+    prospect_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering key or description")
 
-    # Command: seed
-    subparsers.add_parser("seed", help="Seed database with canonical offerings, rules, companies, and evaluations")
+    # Command: 2. best-offer
+    best_offer_parser = subparsers.add_parser("best-offer", help="Find best offer for X company")
+    best_offer_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens)")
+    best_offer_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
 
-    # Command: offerings
-    subparsers.add_parser("offerings", help="List commercial offerings and buyer archetypes")
-
-    # Command: prospect
-    prospect_parser = subparsers.add_parser("prospect", help="Prospect and rank perfect customers for an offering")
-    prospect_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering key or description (e.g. 'agentic_automation', 'managed_soc', 'cloud_modernization')")
-
-    # Command: evaluate
-    eval_parser = subparsers.add_parser("evaluate", help="Deep-dive account fit for an offering")
-    eval_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens, Zalando)")
-    eval_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering name (default: agentic_automation)")
+    # Command: 3. analyze (alias: evaluate)
+    eval_parser = subparsers.add_parser("analyze", aliases=["evaluate"], help="Analyze Offer X with Company X")
+    eval_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens)")
+    eval_parser.add_argument("--offering", required=False, default="agentic_automation", help="Offering name")
     eval_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
 
-    # Command: custom
-    custom_parser = subparsers.add_parser("custom", help="Compile and edit a custom commercial offering interactively")
-    custom_parser.add_argument("--offering", required=False, default=None, help="Initial product or service description")
+    # Command: 4. fetch-data
+    harvest_parser = subparsers.add_parser("fetch-data", help="Fetch data (input data amount in days)")
+    harvest_parser.add_argument("--days", type=int, default=90, help="Data amount in days to fetch (default: 90)")
 
-    # Command: train
-    train_parser = subparsers.add_parser("train", help="Train local ML models on historical market dataset")
+    # Command: 5. train
+    train_parser = subparsers.add_parser("train", help="Train on data")
     train_parser.add_argument("--samples", type=int, default=450, help="Target training episodes count (default: 450)")
     train_parser.add_argument("--no-details", action="store_true", help="Omit feature importance ranking table")
 
-    # Command: fetch-data
-    harvest_parser = subparsers.add_parser("fetch-data", help="Fetch and compile historical enterprise market dataset")
-    harvest_parser.add_argument("--rebuild", action="store_true", help="Force rebuild historical dataset file from scratch")
-
-    # Command: fetch-live
-    live_parser = subparsers.add_parser("fetch-live", help="Fetch multi-source live connector signals for a company")
-    live_parser.add_argument("--company", required=True, help="Target company name (e.g. DHL Group, Siemens, Zalando)")
-    live_parser.add_argument("--domain", required=False, default=None, help="Optional domain hint")
-
-    # Command: models-info
-    subparsers.add_parser("models-info", help="Display local ML model weights and training validation metadata")
+    # Supporting utilities for CLI power users / diagnostic checks
+    subparsers.add_parser("doctor", help="Run preflight system health diagnostics")
+    subparsers.add_parser("seed", help="Seed database with canonical data")
+    subparsers.add_parser("offerings", help="List commercial offerings catalog")
+    subparsers.add_parser("models-info", help="Display local ML model weights and metadata")
 
     args = parser.parse_args()
 
     if args.command is None or args.command == "menu":
         interactive_menu()
+    elif args.command in ("find-companies", "prospect"):
+        prospect_and_render(args.offering)
+    elif args.command == "best-offer":
+        find_best_offer_for_company(args.company, args.domain)
+    elif args.command in ("analyze", "evaluate"):
+        evaluate_single_account(args.company, args.offering, args.domain)
+    elif args.command == "fetch-data":
+        run_harvest_data(days=args.days, show_stats=True)
+    elif args.command == "train":
+        run_train_models(target_samples=args.samples, show_details=not args.no_details)
     elif args.command == "doctor":
         run_doctor()
     elif args.command == "seed":
         run_seed()
     elif args.command == "offerings":
         display_offerings_catalog()
-    elif args.command == "prospect":
-        prospect_and_render(args.offering)
-    elif args.command == "evaluate":
-        evaluate_single_account(args.company, args.offering, args.domain)
-    elif args.command == "custom":
-        run_custom_offering_workflow(args.offering)
-    elif args.command == "train":
-        run_train_models(target_samples=args.samples, show_details=not args.no_details)
-    elif args.command == "fetch-data":
-        run_harvest_data(rebuild=args.rebuild, show_stats=True)
-    elif args.command == "fetch-live":
-        run_fetch_live_data(args.company, args.domain)
     elif args.command == "models-info":
         run_show_model_metadata()
+
 
 if __name__ == "__main__":
     main()

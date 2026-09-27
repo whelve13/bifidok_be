@@ -103,11 +103,58 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
                 results["evidence"].append(
                     f"Personio ATS: Found {len(results['matched_roles'])} target roles."
                 )
+            results["hiring_velocity_score"] = min(1.0, (len(results["matched_roles"]) * 0.25) + 0.2)
             return results
     except Exception:
         pass
 
-    # Fallback: Query Google News for public recruitment and hiring signals
+    # 4. SmartRecruiters Public Postings API
+    try:
+        sr_url = f"https://api.smartrecruiters.com/v1/companies/{clean_slug}/postings?limit=25"
+        r = requests.get(sr_url, headers=HEADERS, timeout=2)
+        if r.status_code == 200:
+            sr_data = r.json()
+            postings = sr_data.get("content", [])
+            if postings:
+                results["ats_provider"] = "SmartRecruiters"
+                results["total_openings"] = len(postings)
+                for p in postings:
+                    title = p.get("name", "")
+                    if any(kw in title.lower() for kw in lowered_kws):
+                        results["matched_roles"].append(title)
+                if results["matched_roles"]:
+                    results["evidence"].append(
+                        f"SmartRecruiters ATS: Found {len(results['matched_roles'])} target roles (e.g. {results['matched_roles'][:2]})."
+                    )
+                results["hiring_velocity_score"] = min(1.0, (len(results["matched_roles"]) * 0.25) + 0.2)
+                return results
+    except Exception:
+        pass
+
+    # 5. Ashby Public Job Board API
+    try:
+        ashby_url = f"https://api.ashbyhq.com/posting-api/job-board/{clean_slug}"
+        r = requests.get(ashby_url, headers=HEADERS, timeout=2)
+        if r.status_code == 200:
+            ashby_data = r.json()
+            jobs = ashby_data.get("jobs", [])
+            if jobs:
+                results["ats_provider"] = "Ashby"
+                results["total_openings"] = len(jobs)
+                for j in jobs:
+                    title = j.get("title", "")
+                    if any(kw in title.lower() for kw in lowered_kws):
+                        results["matched_roles"].append(title)
+                if results["matched_roles"]:
+                    results["evidence"].append(
+                        f"Ashby ATS: Found {len(results['matched_roles'])} target roles (e.g. {results['matched_roles'][:2]})."
+                    )
+                results["hiring_velocity_score"] = min(1.0, (len(results["matched_roles"]) * 0.25) + 0.2)
+                return results
+    except Exception:
+        pass
+
+    # 6. Fallback: Query Google News for public recruitment and hiring signals
     try:
         import urllib.parse
         kw_filter = " OR ".join(keywords[:5]) if keywords else "hiring OR vacancies"
@@ -126,9 +173,11 @@ def fetch_ats_hiring_signals(company_name: str, keywords: List[str] = None) -> D
                 results["evidence"].append(
                     f"Recruitment Signals detected in press: {results['matched_roles'][0][:60]}..."
                 )
+                results["hiring_velocity_score"] = min(1.0, len(results["matched_roles"]) * 0.2)
                 return results
     except Exception:
         pass
 
+    results["hiring_velocity_score"] = 0.0
     results["evidence"].append("Enterprise ATS is custom hosted or private.")
     return results

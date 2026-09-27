@@ -138,37 +138,136 @@ def search_companies_via_wikipedia(search_term: str, max_results: int = 10) -> L
     return results
 
 
+# Curated European Enterprise Index across major sectors for high-scale discovery
+EUROPEAN_ENTERPRISE_INDEX: List[Dict[str, Any]] = [
+    # Logistics, Fleets & Last-Mile Distribution
+    {"name": "DHL Group", "sector": "Logistics & Supply Chain", "country": "DE", "keywords": ["logistics", "courier", "delivery", "cargo", "freight", "transport", "bike", "fleet", "warehouse", "automation"]},
+    {"name": "Maersk Group", "sector": "Logistics & Supply Chain", "country": "DK", "keywords": ["logistics", "shipping", "freight", "cargo", "transport", "cloud", "supply chain"]},
+    {"name": "Kuehne+Nagel", "sector": "Logistics & Supply Chain", "country": "CH", "keywords": ["logistics", "freight", "cargo", "transport", "supply chain", "warehouse", "automation"]},
+    {"name": "DSV Global Transport", "sector": "Logistics & Supply Chain", "country": "DK", "keywords": ["transport", "logistics", "freight", "cargo", "warehouse", "supply chain"]},
+    {"name": "DB Schenker", "sector": "Logistics & Supply Chain", "country": "DE", "keywords": ["logistics", "transport", "freight", "cargo", "rail", "supply chain", "fleet"]},
+    {"name": "PostNL", "sector": "Logistics & Postal", "country": "NL", "keywords": ["postal", "delivery", "courier", "parcel", "last-mile", "bike", "fleet", "logistics"]},
+    {"name": "Geopost", "sector": "Logistics & Courier", "country": "FR", "keywords": ["parcel", "delivery", "courier", "logistics", "last-mile", "bike", "fleet", "express"]},
+    {"name": "Hapag-Lloyd", "sector": "Maritime Transport", "country": "DE", "keywords": ["shipping", "container", "freight", "cargo", "transport", "fleet", "logistics"]},
+    {"name": "Dachser", "sector": "Logistics & Freight", "country": "DE", "keywords": ["logistics", "transport", "freight", "warehouse", "supply chain", "cargo"]},
+    {"name": "Ceva Logistics", "sector": "Logistics & Supply Chain", "country": "CH", "keywords": ["logistics", "freight", "contract", "warehouse", "supply chain"]},
+
+    # Industrial Manufacturing & Automation
+    {"name": "Siemens AG", "sector": "Industrial Manufacturing", "country": "DE", "keywords": ["manufacturing", "industrial", "automation", "cloud", "software", "infrastructure", "iot", "security"]},
+    {"name": "BASF SE", "sector": "Chemicals & Manufacturing", "country": "DE", "keywords": ["chemicals", "manufacturing", "industrial", "campus", "plant", "process", "automation", "efficiency"]},
+    {"name": "Schneider Electric SE", "sector": "Energy Management & Automation", "country": "FR", "keywords": ["energy", "automation", "industrial", "security", "soc", "iot", "infrastructure"]},
+    {"name": "ABB Ltd", "sector": "Industrial Automation & Robotics", "country": "CH", "keywords": ["robotics", "automation", "industrial", "electrification", "power", "manufacturing"]},
+    {"name": "Robert Bosch GmbH", "sector": "Automotive & Industrial", "country": "DE", "keywords": ["automotive", "manufacturing", "industrial", "iot", "automation", "software", "fleet"]},
+    {"name": "Thyssenkrupp AG", "sector": "Industrial & Materials", "country": "DE", "keywords": ["steel", "industrial", "engineering", "manufacturing", "plant", "modernization"]},
+    {"name": "Continental AG", "sector": "Automotive & Technology", "country": "DE", "keywords": ["automotive", "tires", "manufacturing", "software", "autonomous", "fleet"]},
+    {"name": "KION Group", "sector": "Intralogistics & Warehouse", "country": "DE", "keywords": ["warehouse", "forklift", "intralogistics", "automation", "robotics", "supply chain", "fleet"]},
+    {"name": "Jungheinrich AG", "sector": "Intralogistics & Warehouse", "country": "DE", "keywords": ["warehouse", "automation", "forklift", "robotics", "fleet", "logistics"]},
+    {"name": "Alstom SA", "sector": "Transportation & Rail", "country": "FR", "keywords": ["rail", "train", "transport", "infrastructure", "fleet", "mobility", "manufacturing"]},
+    {"name": "Atlas Copco", "sector": "Industrial Tools & Equipment", "country": "SE", "keywords": ["industrial", "compressors", "manufacturing", "equipment", "plant"]},
+    {"name": "Sandvik AB", "sector": "Engineering & Mining", "country": "SE", "keywords": ["engineering", "machining", "mining", "manufacturing", "equipment", "automation"]},
+
+    # Cloud, IT & Digital Services
+    {"name": "SAP SE", "sector": "Enterprise Software", "country": "DE", "keywords": ["software", "cloud", "erp", "enterprise", "database", "modernization", "automation"]},
+    {"name": "Capgemini SE", "sector": "IT Consulting & Services", "country": "FR", "keywords": ["cloud", "consulting", "digital", "transformation", "software", "cybersecurity", "ai"]},
+    {"name": "Atos SE", "sector": "IT Infrastructure & Security", "country": "FR", "keywords": ["cloud", "cybersecurity", "infrastructure", "hpc", "modernization", "digital"]},
+    {"name": "Orange Business", "sector": "Telecommunications & Cloud", "country": "FR", "keywords": ["telecom", "cloud", "cybersecurity", "connectivity", "infrastructure", "iot"]},
+    {"name": "Deutsche Telekom AG", "sector": "Telecommunications & Cloud", "country": "DE", "keywords": ["telecom", "cloud", "network", "security", "infrastructure", "t-systems"]},
+    {"name": "Telefónica SA", "sector": "Telecommunications", "country": "ES", "keywords": ["telecom", "cloud", "security", "tech", "digital", "network"]},
+    {"name": "ASML Holding", "sector": "Semiconductor Equipment", "country": "NL", "keywords": ["semiconductor", "lithography", "manufacturing", "chip", "engineering", "tech"]},
+
+    # Financial Services, Banking & Cyber Compliance (NIS2 / DORA)
+    {"name": "Deutsche Bank AG", "sector": "Banking & Financial Services", "country": "DE", "keywords": ["banking", "finance", "security", "soc", "compliance", "dora", "cloud", "fintech"]},
+    {"name": "BNP Paribas SA", "sector": "Banking & Financial Services", "country": "FR", "keywords": ["banking", "finance", "compliance", "security", "cloud", "risk", "investment"]},
+    {"name": "Banco Santander SA", "sector": "Banking & Financial Services", "country": "ES", "keywords": ["banking", "finance", "cloud", "digital", "security", "compliance", "retail"]},
+    {"name": "ING Group", "sector": "Banking & Financial Services", "country": "NL", "keywords": ["banking", "digital", "finance", "cloud", "automation", "compliance", "security"]},
+    {"name": "Allianz SE", "sector": "Insurance & Asset Management", "country": "DE", "keywords": ["insurance", "finance", "risk", "security", "cloud", "claims", "automation"]},
+    {"name": "AXA SA", "sector": "Insurance & Asset Management", "country": "FR", "keywords": ["insurance", "risk", "security", "cloud", "automation", "finance"]},
+    {"name": "Adyen NV", "sector": "Payment Platforms & FinTech", "country": "NL", "keywords": ["payments", "fintech", "cloud", "platform", "security", "compliance", "scale"]},
+
+    # Retail, E-Commerce & Consumer
+    {"name": "Zalando SE", "sector": "E-Commerce & Fashion Tech", "country": "DE", "keywords": ["ecommerce", "retail", "platform", "cloud", "logistics", "delivery", "automation", "ai"]},
+    {"name": "Carrefour SA", "sector": "Retail & Supermarkets", "country": "FR", "keywords": ["retail", "supermarket", "supply chain", "logistics", "fleet", "cloud", "efficiency"]},
+    {"name": "Ahold Delhaize", "sector": "Retail & Supermarkets", "country": "NL", "keywords": ["retail", "grocery", "ecommerce", "supply chain", "logistics", "automation"]},
+    {"name": "Inditex SA", "sector": "Retail & Apparel", "country": "ES", "keywords": ["retail", "fashion", "zara", "supply chain", "logistics", "cloud", "rfid"]},
+    {"name": "Otto Group", "sector": "E-Commerce & Retail", "country": "DE", "keywords": ["ecommerce", "retail", "logistics", "delivery", "warehouse", "automation"]},
+    {"name": "Delivery Hero SE", "sector": "On-Demand Delivery", "country": "DE", "keywords": ["delivery", "food", "courier", "last-mile", "bike", "fleet", "platform"]},
+
+    # Energy, Utilities & Infrastructure
+    {"name": "TotalEnergies SE", "sector": "Energy & Petrochemicals", "country": "FR", "keywords": ["energy", "oil", "gas", "renewables", "industrial", "plant", "solar", "fleet"]},
+    {"name": "Enel SpA", "sector": "Electric Utilities & Energy", "country": "IT", "keywords": ["energy", "electricity", "renewables", "grid", "smart", "infrastructure", "cloud"]},
+    {"name": "Iberdrola SA", "sector": "Electric Utilities", "country": "ES", "keywords": ["energy", "electricity", "renewables", "wind", "solar", "grid", "security"]},
+    {"name": "Engie SA", "sector": "Utilities & Energy Transition", "country": "FR", "keywords": ["energy", "renewables", "gas", "infrastructure", "facility", "efficiency"]},
+    {"name": "E.ON SE", "sector": "Energy Networks & Infrastructure", "country": "DE", "keywords": ["energy", "grid", "infrastructure", "electricity", "smart", "digital"]},
+
+    # Healthcare & Pharmaceuticals
+    {"name": "Novartis AG", "sector": "Pharmaceuticals", "country": "CH", "keywords": ["pharma", "healthcare", "research", "manufacturing", "clinical", "ai", "compliance"]},
+    {"name": "Sanofi SA", "sector": "Healthcare & Pharmaceuticals", "country": "FR", "keywords": ["pharma", "healthcare", "manufacturing", "research", "digital", "ai"]},
+    {"name": "AstraZeneca PLC", "sector": "Biopharmaceuticals", "country": "GB", "keywords": ["pharma", "biotech", "research", "manufacturing", "clinical", "cloud", "data"]},
+    {"name": "Fresenius SE", "sector": "Healthcare & Hospitals", "country": "DE", "keywords": ["healthcare", "hospitals", "medical", "devices", "compliance", "nis2", "operations"]},
+    {"name": "Philips NV", "sector": "Health Technology", "country": "NL", "keywords": ["healthtech", "medical", "devices", "cloud", "software", "healthcare", "ai"]},
+]
+
+
 def discover_candidate_universe(
     offering_mandate: str,
-    target_count: int = 10,
+    target_count: int = 16,
     include_benchmarks: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Autonomous prospecting scout: discovers real target companies on the fly
-    matching the commercial offering mandate without needing hardcoded lists or categories.
-
-    Returns:
-        List of candidate company profiles with domain, country, headcount, and sector.
+    matching the commercial offering mandate via multi-source discovery:
+    1. European Enterprise Index (sector & keyword matched)
+    2. Wikipedia category members
+    3. Direct Wikipedia entity search
     """
     query_info = derive_discovery_queries(offering_mandate)
+    tokens = query_info.get("registry_terms", [])
+    lowered_mandate = (offering_mandate or "").lower()
+
     discovered_names: List[str] = []
     discovered_items: List[Dict[str, Any]] = []
 
-    # 1. Query dynamically discovered categories first
-    for cat in query_info["categories"]:
+    # 1. Match from Curated European Enterprise Index first (high reliability & verified solvency)
+    for entry in EUROPEAN_ENTERPRISE_INDEX:
+        name = entry["name"]
+        keywords = entry.get("keywords", [])
+        sector = entry.get("sector", "")
+
+        score = 0
+        if any(t in lowered_mandate for t in keywords):
+            score += 2
+        if any(t in sector.lower() for t in tokens):
+            score += 1
+        if any(kw in lowered_mandate for kw in ["all", "enterprise", "general"]):
+            score += 1
+
+        if score > 0 and name not in discovered_names:
+            discovered_names.append(name)
+            discovered_items.append({
+                "name": name,
+                "source": f"European Index:{sector}",
+                "country": entry.get("country", "EU"),
+                "sector": sector,
+            })
         if len(discovered_names) >= target_count:
             break
-        members = discover_companies_via_wikipedia(cat, max_results=target_count)
-        for m in members:
-            if m["name"] not in discovered_names:
-                discovered_names.append(m["name"])
-                discovered_items.append(m)
+
+    # 2. Query dynamically discovered categories from Wikipedia
+    if len(discovered_names) < target_count:
+        for cat in query_info["categories"]:
             if len(discovered_names) >= target_count:
                 break
+            members = discover_companies_via_wikipedia(cat, max_results=target_count)
+            for m in members:
+                if m["name"] not in discovered_names:
+                    discovered_names.append(m["name"])
+                    discovered_items.append(m)
+                if len(discovered_names) >= target_count:
+                    break
 
-    # 2. Supplement with direct Wikipedia entity search if more targets needed
-    if len(discovered_names) < target_count and query_info["registry_terms"]:
-        search_kw = " ".join(query_info["registry_terms"][:3]) + " enterprise company corporation"
+    # 3. Supplement with direct Wikipedia entity search if more targets needed
+    if len(discovered_names) < target_count and tokens:
+        search_kw = " ".join(tokens[:3]) + " enterprise company corporation"
         search_hits = search_companies_via_wikipedia(search_kw, max_results=target_count * 2)
         for h in search_hits:
             if h["name"] not in discovered_names:
@@ -177,7 +276,7 @@ def discover_candidate_universe(
             if len(discovered_names) >= target_count:
                 break
 
-    # 3. Enrich and resolve canonical entities concurrently
+    # 4. Enrich and resolve canonical entities concurrently
     resolved_companies: List[Dict[str, Any]] = []
 
     def _enrich(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:

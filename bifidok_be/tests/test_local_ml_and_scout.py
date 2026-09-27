@@ -53,8 +53,8 @@ class TestLocalMLAndScout(unittest.TestCase):
 
         vec = extract_feature_vector(company, signals, offering)
         self.assertIsInstance(vec, np.ndarray)
-        self.assertEqual(vec.shape, (14,))
-        self.assertEqual(len(FEATURE_NAMES), 14)
+        self.assertEqual(vec.shape, (len(FEATURE_NAMES),))
+        self.assertEqual(len(FEATURE_NAMES), 18)
         self.assertGreater(vec[0], 3.0)  # log10(5000) ~ 3.69
         self.assertEqual(vec[2], 1.0)    # is_solvent
 

@@ -52,9 +52,40 @@ def analyze_security_posture(domain: str) -> Dict[str, Any]:
             results["grade"] = "A"
             results["evidence"].append("Web resilience grade: A (Strong security headers configured).")
 
+        # 2. Passive Tech Stack Fingerprinting
+        detected_tech = []
+        server_hdr = headers_lower.get("server", "")
+        powered_by = headers_lower.get("x-powered-by", "")
+        cookies_str = headers_lower.get("set-cookie", "")
+        combined_meta = f"{server_hdr} {powered_by} {cookies_str}".lower()
+
+        if any(w in combined_meta for w in ["sap", "sap-usercontext", "sap_session", "netweaver"]):
+            detected_tech.append("SAP ERP")
+        if any(w in combined_meta for w in ["salesforce", "force.com"]):
+            detected_tech.append("Salesforce CRM")
+        if any(w in combined_meta for w in ["oracle", "peoplesoft", "siebel"]):
+            detected_tech.append("Oracle Systems")
+        if any(w in combined_meta for w in ["aws", "amazon", "awselb", "awsalb"]):
+            detected_tech.append("Amazon Web Services (AWS)")
+        if any(w in combined_meta for w in ["azure", "arraffinity", "microsoft"]):
+            detected_tech.append("Microsoft Azure")
+        if any(w in combined_meta for w in ["cloudflare", "cf-ray"]):
+            detected_tech.append("Cloudflare Enterprise")
+        if any(w in combined_meta for w in ["nginx", "envoy", "istio", "k8s", "kubernetes"]):
+            detected_tech.append("Kubernetes / Cloud-Native")
+
+        results["detected_tech"] = detected_tech
+        results["has_enterprise_erp"] = any(t in detected_tech for t in ["SAP ERP", "Salesforce CRM", "Oracle Systems"])
+        results["tech_stack_breadth"] = len(detected_tech)
+        if detected_tech:
+            results["evidence"].append(f"Passive Tech Stack Fingerprint: Detected {', '.join(detected_tech[:3])}.")
+
     except Exception:
         results["grade"] = "C"
         results["evidence"].append(f"Primary domain {domain} connection timeout or redirected.")
+        results["detected_tech"] = []
+        results["has_enterprise_erp"] = False
+        results["tech_stack_breadth"] = 0
 
     # 2. Subdomain Reconnaissance via crt.sh (Row 26)
     try:

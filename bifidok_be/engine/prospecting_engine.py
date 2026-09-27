@@ -31,7 +31,7 @@ from connectors.ats import fetch_ats_hiring_signals
 from connectors.financials import fetch_financial_signals
 from connectors.firmographics import resolve_company_entity
 from connectors.gdelt import fetch_gdelt_signals
-from connectors.news import fetch_company_news
+from connectors.news import evaluate_news_relevance, fetch_company_news
 from connectors.registries import verify_official_registry
 from connectors.security import analyze_security_posture
 from connectors.tenders import fetch_public_procurement_tenders
@@ -144,6 +144,11 @@ class CustomerProspectingEngine:
             "cisa_kev_count": 0,
             "github_repo_count": 0,
             "semantic_relevance": 0.85,
+            "detected_tech": [],
+            "has_enterprise_erp": False,
+            "tech_stack_breadth": 0,
+            "has_leadership_change": False,
+            "hiring_velocity_score": 0.0,
         }
 
         evidence_citations: List[ProspectEvidence] = []
@@ -180,6 +185,21 @@ class CustomerProspectingEngine:
             signals["news_items"] = news
             if news:
                 signals["has_news"] = True
+                news_eval = evaluate_news_relevance(news, resolved_offering.signal_keywords)
+                if news_eval.get("has_leadership_change"):
+                    signals["has_leadership_change"] = True
+                    lead_articles = news_eval.get("leadership_articles", [])
+                    lead_snippet = lead_articles[0].get("title", "C-level appointment") if lead_articles else "Executive leadership appointment"
+                    evidence_citations.append(
+                        ProspectEvidence(
+                            category="Executive Leadership Catalyst",
+                            title="C-Level Leadership Appointment / Strategic Reorganization",
+                            snippet=f"Leadership transition detected: {lead_snippet[:80]}",
+                            source="Executive Intelligence Monitor",
+                            confidence=0.92,
+                            points_awarded=20.0,
+                        )
+                    )
                 top_n = news[0]
                 evidence_citations.append(
                     ProspectEvidence(
@@ -218,6 +238,7 @@ class CustomerProspectingEngine:
             ats_res = fetch_ats_hiring_signals(company_name, resolved_offering.ats_roles)
             matched = ats_res.get("matched_roles", [])
             signals["matched_roles"] = matched
+            signals["hiring_velocity_score"] = ats_res.get("hiring_velocity_score", 0.0)
             if ats_res.get("is_remote_first"):
                 comp_data["operational_attributes"]["remote_only"] = True
             if matched:
@@ -225,7 +246,7 @@ class CustomerProspectingEngine:
                     ProspectEvidence(
                         category="Recruitment & Hiring Intent",
                         title=f"Target Roles Detected on Public ATS ({ats_res.get('ats_provider', 'Board')})",
-                        snippet=f"Active openings matching commercial requirements: {', '.join(matched[:3])}.",
+                        snippet=f"Active openings matching commercial requirements: {', '.join(matched[:3])}. Velocity score: {signals['hiring_velocity_score']:.2f}.",
                         source=f"{ats_res.get('ats_provider', 'ATS')} Job Board",
                         confidence=0.88,
                         points_awarded=15.0,
@@ -239,6 +260,21 @@ class CustomerProspectingEngine:
             sec_res = analyze_security_posture(domain)
             signals["security_grade"] = sec_res.get("grade", "B")
             signals["missing_headers"] = sec_res.get("missing_headers", [])
+            signals["detected_tech"] = sec_res.get("detected_tech", [])
+            signals["has_enterprise_erp"] = sec_res.get("has_enterprise_erp", False)
+            signals["tech_stack_breadth"] = sec_res.get("tech_stack_breadth", 0)
+
+            if signals["detected_tech"]:
+                evidence_citations.append(
+                    ProspectEvidence(
+                        category="Tech Stack Fingerprint",
+                        title=f"Enterprise Tech Stack Detected ({len(signals['detected_tech'])} systems)",
+                        snippet=f"Passive fingerprint identified enterprise infrastructure: {', '.join(signals['detected_tech'][:4])}.",
+                        source="Passive HTTP/TLS Header Reconnaissance",
+                        confidence=0.91,
+                        points_awarded=16.0,
+                    )
+                )
         except Exception:
             pass
 
@@ -282,7 +318,7 @@ class CustomerProspectingEngine:
         else:
             primary_wedge = wedges[0]
 
-        # Dynamic buying committee personas aligned with offering
+        # Dynamic buying committee personas aligned with offering (CIO, CISO, CFO)
         off_title_low = resolved_offering.title.lower()
         if any(w in off_title_low for w in ["security", "soc", "cyber", "compliance", "nis2"]):
             buying_committee = [
@@ -293,41 +329,59 @@ class CustomerProspectingEngine:
                     outreach_hook=f"Addressing perimeter resilience and compliance with {resolved_offering.title}.",
                 ),
                 DecisionMakerPersona(
-                    title="VP of Infrastructure & Security Operations",
-                    department="Security Operations (SecOps)",
-                    mandate="Reduce Mean-Time-To-Detect (MTTD) and eliminate telemetry blindspots across hybrid estates.",
-                    outreach_hook="Continuous automated security monitoring and managed response co-delivery.",
+                    title="Chief Information Officer (CIO)",
+                    department="Enterprise IT & Infrastructure",
+                    mandate="Eliminate infrastructure vulnerabilities without disrupting line-of-business application availability.",
+                    outreach_hook=f"Seamlessly integrating SOC automation into existing IT architectures for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance, Risk & Governance",
+                    mandate="Mitigate catastrophic cyber insurance premiums and regulatory non-compliance fines.",
+                    outreach_hook=f"De-risking regulatory liabilities under EU NIS2 frameworks while optimizing internal security OpEx.",
                 ),
             ]
         elif any(w in off_title_low for w in ["cloud", "devops", "platform", "infrastructure", "modernization"]):
             buying_committee = [
                 DecisionMakerPersona(
-                    title="VP of Cloud Infrastructure & Platform Engineering",
+                    title="Chief Information Officer (CIO) / VP of Cloud",
                     department="Platform Engineering & Cloud Architecture",
                     mandate="Modernize legacy application architectures and optimize multi-cloud infrastructure workloads.",
                     outreach_hook=f"Accelerating cloud architecture modernization with {resolved_offering.title}.",
                 ),
                 DecisionMakerPersona(
-                    title="Chief Technology Officer (CTO)",
-                    department="Engineering & Technology",
-                    mandate="Eliminate tech debt, enhance developer productivity, and de-risk mission-critical migrations.",
-                    outreach_hook="Turnkey migration architecture and specialized platform co-delivery squads.",
+                    title="Chief Information Security Officer (CISO)",
+                    department="Cloud Security & Governance",
+                    mandate="Guarantee sovereign data protection and zero-trust perimeter enforcement during cloud migration.",
+                    outreach_hook=f"De-risking cloud transition with automated compliance baselines for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance & Procurement",
+                    mandate="Rationalize cloud runaway spend (FinOps) and drive measurable ROI on IT capital expenditure.",
+                    outreach_hook=f"Structuring migration milestones to deliver clear OpEx predictability and cost efficiency.",
                 ),
             ]
         else:
             # Default: Enterprise Automation / AI / Digital Transformation
             buying_committee = [
                 DecisionMakerPersona(
-                    title="VP of Enterprise Architecture / Digital Transformation",
-                    department="Digital Transformation & Automation",
-                    mandate="Scale operational efficiency and eliminate high-cost manual back-office overhead.",
-                    outreach_hook=f"Eliminating workflow friction and delivery bottlenecks with {resolved_offering.title}.",
-                ),
-                DecisionMakerPersona(
                     title="Chief Information Officer (CIO)",
                     department="Information Technology & Enterprise Systems",
                     mandate="Deploy auditable, sovereign AI workflows integrated directly with ERP/CRM without vendor lock-in.",
-                    outreach_hook="Evidence-grounded autonomous process automation and co-delivery acceleration.",
+                    outreach_hook=f"Evidence-grounded autonomous process automation and co-delivery acceleration for {company_name}.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Information Security Officer (CISO)",
+                    department="Information Security & Data Governance",
+                    mandate="Ensure enterprise data integrity, EU AI Act compliance, and air-gapped data boundary enforcement.",
+                    outreach_hook=f"Ensuring enterprise automation complies with strict data governance and ISO/SOC standards.",
+                ),
+                DecisionMakerPersona(
+                    title="Chief Financial Officer (CFO)",
+                    department="Finance & Operational Strategy",
+                    mandate="Drive operational margin expansion, reduce manual back-office overhead, and accelerate EBITDA growth.",
+                    outreach_hook=f"Accelerating operational throughput with measurable payback periods under 6 months.",
                 ),
             ]
 
@@ -340,7 +394,12 @@ class CustomerProspectingEngine:
         else:
             estimated_scope = "€100K - €350K Targeted Strategic Pilot & Architecture Assessment"
 
-        # Rationale and pitch
+        # Rationale and grounded pitch with verbatim evidence citations
+        citations_summary = ""
+        if evidence_citations:
+            top_evidence_titles = [f"  - [{e.category}] {e.title}: \"{e.snippet}\"" for e in evidence_citations[:3]]
+            citations_summary = "\n\nVerified Public Signals & Catalysts:\n" + "\n".join(top_evidence_titles)
+
         operational_rationale = (
             f"{company_name} exhibits ideal enterprise characteristics for {resolved_offering.title}: "
             f"{primary_wedge.name} provides immediate operational synergy with their {comp_data.get('sector', 'Enterprise')} footprint, "
@@ -349,10 +408,10 @@ class CustomerProspectingEngine:
 
         pitch = (
             f"Subject: Accelerating {company_name}'s operational efficiency with {resolved_offering.title}\n\n"
-            f"Dear Team,\n\n"
-            f"Given {company_name}'s leadership in {comp_data.get('sector', 'the market')}, "
-            f"we noted strategic alignment regarding {primary_wedge.name}. "
-            f"Our solution helps enterprises achieve: {primary_wedge.value_driver}\n\n"
+            f"Dear Leadership Team at {company_name},\n\n"
+            f"Given {company_name}'s strategic position in {comp_data.get('sector', 'the market')}, "
+            f"we noted strong operational synergy regarding {primary_wedge.name}. "
+            f"Our solution helps enterprises achieve: {primary_wedge.value_driver}{citations_summary}\n\n"
             f"Would you be open to a 10-minute briefing next week?"
         )
 

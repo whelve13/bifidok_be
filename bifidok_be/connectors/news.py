@@ -73,8 +73,18 @@ def evaluate_news_relevance(news_items: List[Dict[str, Any]], target_keywords: L
                 "link": item["link"]
             })
 
+    # Executive & leadership appointment detection
+    exec_roles = ["cio", "ciso", "cto", "cdo", "chief information", "chief technology", "chief security", "head of it", "head of security", "new ceo"]
+    leadership_matches = []
+    for item in news_items:
+        t_low = item["title"].lower()
+        if any(role in t_low for role in exec_roles) and any(verb in t_low for verb in ["appoint", "name", "join", "hire", "step", "elect"]):
+            leadership_matches.append(item)
+
     return {
         "matched_count": len(matched),
         "articles": matched,
-        "is_detected": len(matched) > 0
+        "is_detected": len(matched) > 0,
+        "has_leadership_change": len(leadership_matches) > 0,
+        "leadership_articles": leadership_matches,
     }
